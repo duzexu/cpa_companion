@@ -1,0 +1,21 @@
+services:
+  companion:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL}
+      LINUXDO_CLIENT_ID: ${LINUXDO_CLIENT_ID:?set LINUXDO_CLIENT_ID}
+      LINUXDO_CLIENT_SECRET: ${LINUXDO_CLIENT_SECRET:?set LINUXDO_CLIENT_SECRET}
+      ADMIN_SUBJECTS: ${ADMIN_SUBJECTS:-}
+      GITHUB_URL: ${GITHUB_URL:-}
+      CPA_BASE_URL: ${CPA_BASE_URL:?set CPA_BASE_URL}
+      CPA_API_KEY: ${CPA_API_KEY:?set CPA_API_KEY}
+      CPA_MODEL_ALIAS_PREFIXES: ${CPA_MODEL_ALIAS_PREFIXES:-}
+      CPA_ACCOUNT_CACHE_TTL: ${CPA_ACCOUNT_CACHE_TTL:-15s}
+      CPA_MANAGEMENT_KEY: ${CPA_MANAGEMENT_KEY:?set CPA_MANAGEMENT_KEY}
+    volumes:
+      - ./data:/data

@@ -1,0 +1,12 @@
+# Use on a Linux host where CPA itself listens on 127.0.0.1.
+# The companion remains a separate container, but shares the host network so
+# CPA's localhost-only management API stays private and reachable.
+services:
+  companion:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    network_mode: host
+    ports: !reset []
+    environment:
+      LISTEN_ADDR: 127.0.0.1:8080

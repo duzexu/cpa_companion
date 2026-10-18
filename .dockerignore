@@ -1,0 +1,10 @@
+data
+test/local/data
+companion
+dist
+.deploy
+__pycache__
+.env
+.env*
+.git
+*.log

@@ -1,0 +1,9 @@
+data
+test/local/data
+companion
+dist
+__pycache__
+.env
+.env*
+.git
+*.log

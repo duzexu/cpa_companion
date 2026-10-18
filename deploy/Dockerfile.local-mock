@@ -1,0 +1,9 @@
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+COPY test/localmock/main.go ./main.go
+RUN CGO_ENABLED=0 go build -trimpath -o /out/local-mock main.go
+
+FROM debian:bookworm-slim
+COPY --from=build /out/local-mock /usr/local/bin/local-mock
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/local-mock"]

@@ -1,0 +1,39 @@
+name: cpa-linuxdo-local
+services:
+  companion:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mock:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:8080"
+    environment:
+      PUBLIC_URL: http://localhost:18080
+      LINUXDO_CLIENT_ID: local-test-client
+      LINUXDO_CLIENT_SECRET: local-test-secret
+      ADMIN_SUBJECTS: local-admin
+      GITHUB_URL: ${GITHUB_URL:-}
+      LOCAL_TEST_MODE: "1"
+      LOCAL_OAUTH_AUTHORIZE_URL: http://localhost:18081/oauth2/authorize
+      LOCAL_OAUTH_TOKEN_URL: http://mock:8081/oauth2/token
+      LOCAL_OAUTH_USERINFO_URL: http://mock:8081/api/user
+      CPA_BASE_URL: http://mock:8081
+      CPA_API_KEY: local-cpa-proxy-key
+      CPA_MANAGEMENT_KEY: local-cpa-management-key
+    volumes:
+      - ./test/local/data:/data
+  mock:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.local-mock
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18081:8081"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/local-mock", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
