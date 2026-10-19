@@ -95,6 +95,45 @@ func auditTestResponse(hitCategory string, hitScore float64) []byte {
 	return data
 }
 
+func TestAuditDecisionsEndpointUsesFullURLAndObjectState(t *testing.T) {
+	const conversation = "用户：\n第一条消息\n\n助手：\n上一轮回复\n\n用户：\n当前消息"
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/decisions/" || r.URL.RawQuery != "tenant=qa" {
+			t.Errorf("unexpected decisions endpoint: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "Bearer decisions-test-key" {
+			t.Error("missing decisions API key")
+		}
+		var body struct {
+			Model string `json:"model"`
+			State struct {
+				Conversation string `json:"conversation"`
+			} `json:"state"`
+			Questions map[string]struct {
+				Type string `json:"type"`
+			} `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model != "typesafe/jev-latest" ||
+			body.State.Conversation != conversation || len(body.Questions) != len(auditCategories) {
+			t.Errorf("invalid decisions request: %+v, %v", body, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(auditTestResponse("hate", 0.7))
+	}))
+	defer provider.Close()
+	sealed, err := sealAPIKey(strings.Repeat("a", 64), "systemone", "audit", "decisions-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: settings{CookieKey: strings.Repeat("a", 64)}}
+	decision, err := a.systemOneDecision(context.Background(), auditEndpoint{
+		BaseURL: provider.URL + "/v1/decisions/?tenant=qa", Model: "typesafe/jev-latest", APIKeySealed: sealed,
+	}, defaultAuditConfig().Thresholds, conversation)
+	if err != nil || !decision.Hit || decision.Category != "hate" || decision.Score != 70 {
+		t.Fatalf("unexpected decisions result: %+v, %v", decision, err)
+	}
+}
+
 func TestAuditPersistsOnlyHitInputAndFallsBack(t *testing.T) {
 	dir := t.TempDir()
 	db, err := openStore(filepath.Join(dir, "store.json"))
@@ -142,7 +181,7 @@ func TestAuditPersistsOnlyHitInputAndFallsBack(t *testing.T) {
 	cfg := defaultAuditConfig()
 	cfg.Enabled = true
 	cfg.Endpoints[0].Model = "custom-jev"
-	cfg.Endpoints[0].BaseURL = provider.URL + "/typesafe/v1"
+	cfg.Endpoints[0].BaseURL = provider.URL + "/typesafe/v1/systemone"
 	cfg.SamplePercent = 0
 	cfg.Keywords = []string{"watchword"}
 	cookieKey := strings.Repeat("a", 64)
@@ -274,8 +313,8 @@ func TestAuditEndpointFailoverAndUsageLogLink(t *testing.T) {
 	cfg.SamplePercent = 0
 	cfg.Keywords = []string{"watchword"}
 	cfg.Endpoints = []auditEndpoint{
-		{ID: "primary", Name: "主接口", BaseURL: primary.URL + "/typesafe/v1", Model: "jev-latest", APIKeySealed: sealed},
-		{ID: "backup", Name: "备用接口", BaseURL: backup.URL + "/typesafe/v1", Model: "jev-latest", APIKeySealed: sealed},
+		{ID: "primary", Name: "主接口", BaseURL: primary.URL + "/typesafe/v1/systemone", Model: "jev-latest", APIKeySealed: sealed},
+		{ID: "backup", Name: "备用接口", BaseURL: backup.URL + "/typesafe/v1/systemone", Model: "jev-latest", APIKeySealed: sealed},
 	}
 	if err := db.saveAuditSettings(cfg); err != nil {
 		t.Fatal(err)
@@ -325,7 +364,11 @@ func TestAuditEndpointFailoverAndUsageLogLink(t *testing.T) {
 	auditPageRequest.AddCookie(&http.Cookie{Name: "session", Value: a.sign(signedPayload{UserID: "user", CSRF: "csrf", Expires: time.Now().Add(time.Hour).Unix()})})
 	auditPageResponse := httptest.NewRecorder()
 	a.routes().ServeHTTP(auditPageResponse, auditPageRequest)
-	linked := strings.Contains(auditPageResponse.Body.String(), "log_id="+strconv.FormatInt(rows[0].UsageLogID, 10))
+	logDialogID := "log-detail-" + strconv.FormatInt(rows[0].UsageLogID, 10)
+	linked := strings.Contains(auditPageResponse.Body.String(), `data-audit-open="`+logDialogID+`"`) &&
+		strings.Contains(auditPageResponse.Body.String(), `class="log-dialog" id="`+logDialogID+`"`) &&
+		strings.Contains(auditPageResponse.Body.String(), "Alice · user") &&
+		!strings.Contains(auditPageResponse.Body.String(), "log_id="+strconv.FormatInt(rows[0].UsageLogID, 10))
 	endpointShown := strings.Contains(auditPageResponse.Body.String(), "SystemOne · 备用接口")
 	if auditPageResponse.Code != http.StatusOK || !linked || !endpointShown {
 		t.Fatalf("audit page status=%d linked=%t endpoint=%t", auditPageResponse.Code, linked, endpointShown)
@@ -367,8 +410,8 @@ func TestAuditSettingsFormKeepsKeysWithReorderedEndpoints(t *testing.T) {
 	cfg.Enabled = true
 	cfg.Keywords = []string{"watchword"}
 	cfg.Endpoints = []auditEndpoint{
-		{ID: "first", Name: "First", BaseURL: "https://first.example/typesafe/v1", Model: "jev-latest", APIKeySealed: first},
-		{ID: "second", Name: "Second", BaseURL: "https://second.example/typesafe/v1", Model: "jev-latest", APIKeySealed: second},
+		{ID: "first", Name: "First", BaseURL: "https://first.example/typesafe/v1/systemone", Model: "jev-latest", APIKeySealed: first},
+		{ID: "second", Name: "Second", BaseURL: "https://second.example/typesafe/v1/systemone", Model: "jev-latest", APIKeySealed: second},
 	}
 	if err := db.saveAuditSettings(cfg); err != nil {
 		t.Fatal(err)
@@ -390,7 +433,7 @@ func TestAuditSettingsFormKeepsKeysWithReorderedEndpoints(t *testing.T) {
 	}
 	form.Set("endpoint_2_name", "Third")
 	form.Set("endpoint_2_model", "jev-latest")
-	form.Set("endpoint_2_base_url", "https://third.example/typesafe/v1")
+	form.Set("endpoint_2_base_url", "https://third.example/typesafe/v1/systemone")
 	form.Set("endpoint_2_api_key", "third-secret")
 	post := func(values url.Values) int {
 		r := httptest.NewRequest(http.MethodPost, "/admin/audit", strings.NewReader(values.Encode()))
@@ -412,7 +455,7 @@ func TestAuditSettingsFormKeepsKeysWithReorderedEndpoints(t *testing.T) {
 	for k, v := range form {
 		bad[k] = append([]string(nil), v...)
 	}
-	bad.Set("endpoint_2_base_url", "https://third.example/typesafe/v1/systemone")
+	bad.Set("endpoint_2_base_url", "https://third.example")
 	if got := post(bad); got != http.StatusBadRequest {
 		t.Fatalf("URL validation status = %d", got)
 	}

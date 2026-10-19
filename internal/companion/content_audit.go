@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -244,9 +245,9 @@ func keywordAudit(text string, keywords []string) auditDecision {
 }
 
 func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thresholds map[string]int, input string) (auditDecision, error) {
-	baseURL := endpoint.BaseURL
-	if baseURL == "" {
-		baseURL = defaultSystemOneBaseURL
+	endpointURL := endpoint.BaseURL
+	if endpointURL == "" {
+		return auditDecision{}, errors.New("audit endpoint URL is required")
 	}
 	model := endpoint.Model
 	if model == "" {
@@ -264,15 +265,24 @@ func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thr
 	for _, category := range auditCategories {
 		questions[auditQuestionID(category.Name)] = question{Type: "noul", Instructions: category.Question}
 	}
-	payload, err := json.Marshal(struct {
-		Model     string              `json:"model"`
-		State     string              `json:"state"`
-		Questions map[string]question `json:"questions"`
-	}{Model: model, State: input, Questions: questions})
+	parsedURL, err := url.Parse(endpointURL)
 	if err != nil {
 		return auditDecision{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/systemone", bytes.NewReader(payload))
+	decisionsAPI := strings.HasSuffix(strings.TrimRight(parsedURL.Path, "/"), "/v1/decisions")
+	var state any = input
+	if decisionsAPI {
+		state = map[string]string{"conversation": input}
+	}
+	payload, err := json.Marshal(struct {
+		Model     string              `json:"model"`
+		State     any                 `json:"state"`
+		Questions map[string]question `json:"questions"`
+	}{Model: model, State: state, Questions: questions})
+	if err != nil {
+		return auditDecision{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(payload))
 	if err != nil {
 		return auditDecision{}, err
 	}

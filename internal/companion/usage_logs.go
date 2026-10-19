@@ -20,6 +20,8 @@ import (
 
 type usageLogStore struct{ db *sql.DB }
 
+const usageLogSelectColumns = `id,at_ms,user_id,username,key_id,plan_id,account_id,account_prefix,model,route,status,duration_ms,first_byte_ms,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,charge_pico_usd,estimated,error_code,error_message`
+
 type usageLog struct {
 	ID                                                                          int64
 	At                                                                          time.Time
@@ -344,26 +346,17 @@ func (s *usageLogStore) list(ctx context.Context, f usageFilter) ([]usageLog, bo
 	}
 	where, args := usageWhere(f)
 	args = append(args, f.Limit+1, (f.Page-1)*f.Limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,at_ms,user_id,username,key_id,plan_id,account_id,account_prefix,model,route,status,duration_ms,first_byte_ms,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,charge_pico_usd,estimated,error_code,error_message FROM usage_logs WHERE `+where+` ORDER BY at_ms DESC,id DESC LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+usageLogSelectColumns+` FROM usage_logs WHERE `+where+` ORDER BY at_ms DESC,id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
 	out := make([]usageLog, 0, f.Limit)
 	for rows.Next() {
-		var l usageLog
-		var at int64
-		var estimated int
-		var firstByte sql.NullInt64
-		if err := rows.Scan(&l.ID, &at, &l.UserID, &l.Username, &l.KeyID, &l.PlanID, &l.AccountID, &l.AccountPrefix, &l.Model, &l.Route, &l.Status, &l.DurationMS, &firstByte, &l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheWriteTokens, &l.ChargePicoUSD, &estimated, &l.ErrorCode, &l.ErrorMessage); err != nil {
+		l, err := scanUsageLog(rows)
+		if err != nil {
 			return nil, false, err
 		}
-		if firstByte.Valid {
-			value := int(firstByte.Int64)
-			l.FirstByteMS = &value
-		}
-		l.At = time.UnixMilli(at)
-		l.Estimated = estimated != 0
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -374,6 +367,48 @@ func (s *usageLogStore) list(ctx context.Context, f usageFilter) ([]usageLog, bo
 		out = out[:f.Limit]
 	}
 	return out, more, nil
+}
+
+func (s *usageLogStore) logsByIDs(ctx context.Context, ids []int64) ([]usageLog, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i], args[i] = "?", id
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+usageLogSelectColumns+` FROM usage_logs WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]usageLog, 0, len(ids))
+	for rows.Next() {
+		log, err := scanUsageLog(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, log)
+	}
+	return out, rows.Err()
+}
+
+func scanUsageLog(rows *sql.Rows) (usageLog, error) {
+	var l usageLog
+	var at int64
+	var estimated int
+	var firstByte sql.NullInt64
+	if err := rows.Scan(&l.ID, &at, &l.UserID, &l.Username, &l.KeyID, &l.PlanID, &l.AccountID, &l.AccountPrefix, &l.Model, &l.Route, &l.Status, &l.DurationMS, &firstByte, &l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheWriteTokens, &l.ChargePicoUSD, &estimated, &l.ErrorCode, &l.ErrorMessage); err != nil {
+		return usageLog{}, err
+	}
+	if firstByte.Valid {
+		value := int(firstByte.Int64)
+		l.FirstByteMS = &value
+	}
+	l.At = time.UnixMilli(at)
+	l.Estimated = estimated != 0
+	return l, nil
 }
 func (s *usageLogStore) summary(ctx context.Context, f usageFilter) (usageSummary, error) {
 	where, args := usageWhere(f)

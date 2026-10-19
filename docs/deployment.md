@@ -38,4 +38,6 @@ docker compose -f docker-compose.yml -f compose.server.yml up -d --build
 
 当前格式要求 `data/users.sqlite` 保存用户资料，`store.json` 使用模型价格表达式、逐账号时间窗和 `audit.endpoints`；每把 API Key 必须有加密副本。方案整体起止时间由账号时段在内存中推导，不再写入 `store.json`。升级时先停止附属容器并完整备份 `data/`，再执行 `docker compose up -d --build`；原 CPA 不需要重启。使用日志和内容审计分别保存请求发生时的用户名快照与用户 ID，后续改名不改写历史记录。方案配置使用单机 JSON，用户与使用日志分别使用单机 SQLite；服务只能运行一个实例。回退程序时应同时恢复升级前整个 `data/` 备份。
 
+审计接口使用完整 POST 地址，程序不会自动补路径。升级已有安装时，先停止附属容器并备份整个 `data/`；然后在 `data/store.json` 中把 `audit.endpoints` 内旧 TypeSafe 根地址的 `base_url`（例如 `https://ai-gateway.vercel.sh/typesafe/v1`）改为完整的 `https://ai-gateway.vercel.sh/typesafe/v1/systemone`，再启动新版。`/v1/decisions` 地址直接保留。旧版管理页不接受带 `/systemone` 的地址，因此不要在旧版管理页提前修改。
+
 `CPA_MODEL_ALIAS_PREFIXES` 是可选补充，仅用于 CPA 的 OAuth 模型别名接口未列出的自定义前缀。填写后，匹配此前缀的模型不会出现在对外 `/v1/models` 或价格列表，客户端也不能直接请求。上游认证文件或 AI 提供商配置必须有可识别且唯一的前缀，才能被方案指定。

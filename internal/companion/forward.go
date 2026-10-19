@@ -761,6 +761,11 @@ func (w *retryResponseWriter) commit() {
 		w.cyber.write(w.body.Bytes())
 	}
 	for k, values := range w.header {
+		// CPA's trace ID embeds the selected upstream credential index.
+		// Keep that internal routing identifier out of downstream responses.
+		if strings.EqualFold(k, "X-CPA-TRACE-ID") {
+			continue
+		}
 		for _, value := range values {
 			w.target.Header().Add(k, value)
 		}
@@ -791,11 +796,14 @@ func (a *app) forwardPlanModels(w http.ResponseWriter, snapshot accountSnapshot,
 				base := strings.TrimPrefix(id, account.Prefix+"/")
 				_, isAlias := snapshot.aliases[base]
 				if !isAlias && !seen[base] {
-					copyItem := make(map[string]any, len(item))
-					for k, v := range item {
-						copyItem[k] = v
+					// Expose only public model fields. CPA may add internal
+					// routing metadata to its own catalog in the future.
+					copyItem := map[string]any{"id": base}
+					for _, field := range []string{"object", "created", "owned_by"} {
+						if value, ok := item[field]; ok {
+							copyItem[field] = value
+						}
 					}
-					copyItem["id"] = base
 					visible = append(visible, copyItem)
 					seen[base] = true
 				}

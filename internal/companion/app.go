@@ -109,6 +109,7 @@ func newApp(cfg settings, db *store) *app {
 
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /assets/logo.png", serveBrandLogo)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("GET /auth/login", a.login)

@@ -165,6 +165,22 @@ func TestUsageLogsPersistAndRespectUserScope(t *testing.T) {
 		visible := strings.Contains(admin.Body.String(), "pricey")
 		if path == "/dashboard" {
 			visible = strings.Contains(admin.Body.String(), `<strong class="dash-figure">3</strong>`) && strings.Contains(admin.Body.String(), `<strong class="dash-stat-value">33%</strong>`)
+			if !strings.Contains(admin.Body.String(), `已分配方案情况`) || !strings.Contains(admin.Body.String(), `class="dash-plan-name">metered</strong>`) ||
+				!strings.Contains(bob.Body.String(), `已分配方案情况`) || !strings.Contains(bob.Body.String(), `class="dash-plan-name">尚未分配</strong>`) {
+				t.Fatal("dashboard plan section leaked or hid the signed-in user's assignment")
+			}
+			for _, body := range []string{admin.Body.String(), bob.Body.String()} {
+				if !strings.Contains(body, `所有用户的方案分配`) || !strings.Contains(body, `AliceRenamed`) ||
+					!strings.Contains(body, `BobDisplay`) || !strings.Contains(body, `已分配 1 / 2 位用户`) ||
+					!strings.Contains(body, `codex · one`) || !strings.Contains(body, `当前可用`) {
+					t.Fatal("dashboard did not show the shared assignment list")
+				}
+				if !(strings.Index(body, `上游账号状态</h2>`) < strings.Index(body, `id="dash-plan-title"`) &&
+					strings.Index(body, `id="dash-plan-title"`) < strings.Index(body, `id="dash-assignments-title"`) &&
+					strings.Index(body, `id="dash-assignments-title"`) < strings.Index(body, `接下来去哪里</h2>`)) {
+					t.Fatal("dashboard assignment sections are not directly above next steps")
+				}
+			}
 			if strings.Contains(admin.Body.String(), "近 7 天") || strings.Contains(admin.Body.String(), "近 30 天") || !strings.Contains(admin.Body.String(), "最近 6 小时") {
 				t.Fatal("dashboard still shows the old date ranges")
 			}

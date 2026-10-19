@@ -77,12 +77,14 @@ func (a *app) usageDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	accountProviders := map[string]string{}
 	accountDisabled := map[string]bool{}
+	accountDetails := map[string]credential{}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	if accounts, err := a.credentials(ctx); err == nil {
 		for _, account := range accounts {
 			accountProviders[account.ID] = account.Provider
 			accountDisabled[account.ID] = account.Disabled
+			accountDetails[account.ID] = account
 		}
 	}
 	activeAccounts := 0
@@ -115,9 +117,24 @@ func (a *app) usageDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	planStatus := "尚未分配分流方案"
+	planStatusClass := "waiting"
 	if hasPlan {
 		planStatus = plan.StatusText(now)
+		planStatusClass = plan.StatusClass(now)
+		if planStatus == "生效中" && !planActive {
+			planStatus = "暂不可用"
+			planStatusClass = "disabled"
+		}
 	}
+	planAccounts := make([]dashboardPlanAccount, 0, assigned)
+	planPeriods := make([]string, 0)
+	if hasPlan {
+		for _, period := range plan.Periods() {
+			planPeriods = append(planPeriods, strings.ReplaceAll(period, "T", " "))
+		}
+		planAccounts = dashboardPlanAccounts(plan, accountDetails, planActive, now)
+	}
+	assignments, assignedUsers := dashboardAssignments(a.db.users(), a.db.plans(), accountDetails, now)
 	scopeText := "我的数据"
 	if scope == "" {
 		scopeText = "全部用户"
@@ -135,6 +152,12 @@ func (a *app) usageDashboard(w http.ResponseWriter, r *http.Request) {
 		SuccessRate                                          int64
 		SuccessWidth, FailureWidth                           int64
 		Verdict, WirePoints, PlanName, PlanStatus            string
+		PlanStatusClass                                      string
+		Plan                                                 routingPlan
+		PlanPeriods                                          []string
+		PlanAccounts                                         []dashboardPlanAccount
+		Assignments                                          []dashboardAssignment
+		AssignedUsers                                        int
 		HasPlan, PlanActive, HasBudget                       bool
 		Assigned, ActiveAccounts, InactiveAccounts, KeyCount int
 		ActivePercent, InactivePercent                       int64
@@ -142,9 +165,101 @@ func (a *app) usageDashboard(w http.ResponseWriter, r *http.Request) {
 		Budget, Used                                         string
 	}{u, p.CSRF, admin, scope == "", scopeText, summary, traffic, providers,
 		recentRequests, recentSuccess, recentFailure, percentOf(recentSuccess, recentRequests), percentOf(recentSuccess, recentRequests), percentOf(recentFailure, recentRequests),
-		verdict, sparklinePoints(values), plan.Name, planStatus, hasPlan, planActive, plan.BudgetPicoUSD > 0,
+		verdict, sparklinePoints(values), plan.Name, planStatus, planStatusClass, plan, planPeriods, planAccounts, assignments, assignedUsers, hasPlan, planActive, plan.BudgetPicoUSD > 0,
 		assigned, activeAccounts, assigned - activeAccounts, len(a.db.keysForUser(u.ID)), percentOf(int64(activeAccounts), int64(assigned)), percentOf(int64(assigned-activeAccounts), int64(assigned)), modelCount,
 		formatPicoUSD(plan.BudgetPicoUSD), formatPicoUSD(plan.UsedPicoUSD)}, a.cfg.GitHubURL)
+}
+
+type dashboardPlanAccount struct {
+	Label, Period, State string
+	Active               bool
+}
+
+func dashboardPlanAccounts(plan routingPlan, details map[string]credential, planActive bool, now time.Time) []dashboardPlanAccount {
+	accounts := make([]dashboardPlanAccount, 0, len(plan.AccountIDs))
+	for index, id := range plan.AccountIDs {
+		account, known := details[id]
+		label := fmt.Sprintf("上游账号 %d", index+1)
+		state := "账号信息暂不可用"
+		active := false
+		if known {
+			label = account.Provider + " · " + account.Prefix
+			state = "时段未开放"
+			if account.Disabled {
+				state = "上游已禁用"
+			} else if plan.accountActiveAt(id, now) {
+				if planActive {
+					state, active = "当前可用", true
+				} else {
+					state = "方案不可用"
+				}
+			}
+		}
+		start, end := plan.AccountStartInput(id), plan.AccountEndInput(id)
+		if start == "" {
+			start = "立即"
+		}
+		if end == "" {
+			end = "永久"
+		}
+		accounts = append(accounts, dashboardPlanAccount{Label: label, Period: strings.ReplaceAll(start+" ～ "+end, "T", " "), State: state, Active: active})
+	}
+	return accounts
+}
+
+type dashboardAssignment struct {
+	Username, UserID, PlanName, Status, StatusClass, Periods string
+	AccountCount                                             int
+	Accounts                                                 []dashboardPlanAccount
+	Assigned                                                 bool
+}
+
+func dashboardAssignments(users []user, plans []routingPlan, details map[string]credential, now time.Time) ([]dashboardAssignment, int) {
+	byID := make(map[string]routingPlan, len(plans))
+	for _, plan := range plans {
+		byID[plan.ID] = plan
+	}
+	rows := make([]dashboardAssignment, 0, len(users))
+	assigned := 0
+	for _, member := range users {
+		name := member.Username
+		if name == "" {
+			name = member.ID
+		}
+		row := dashboardAssignment{Username: name, UserID: member.ID, PlanName: "—", Status: "未分配", StatusClass: "waiting"}
+		if member.PlanID != "" {
+			row.Assigned = true
+			assigned++
+			if plan, ok := byID[member.PlanID]; ok {
+				row.PlanName = plan.Name
+				row.Status = plan.StatusText(now)
+				row.StatusClass = plan.StatusClass(now)
+				row.AccountCount = len(plan.AccountIDs)
+				row.Accounts = dashboardPlanAccounts(plan, details, !member.Disabled && row.Status == "生效中", now)
+				periods := plan.Periods()
+				for i := range periods {
+					periods[i] = strings.ReplaceAll(periods[i], "T", " ")
+				}
+				row.Periods = strings.Join(periods, "；")
+			} else {
+				row.Status, row.StatusClass = "方案不存在", "disabled"
+			}
+		}
+		if member.Disabled {
+			row.Status, row.StatusClass = "用户已禁用", "disabled"
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Assigned != rows[j].Assigned {
+			return rows[i].Assigned
+		}
+		if rows[i].Username != rows[j].Username {
+			return rows[i].Username < rows[j].Username
+		}
+		return rows[i].UserID < rows[j].UserID
+	})
+	return rows, assigned
 }
 
 type dashboardProvider struct {

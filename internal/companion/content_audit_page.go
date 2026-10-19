@@ -24,6 +24,8 @@ type auditPageData struct {
 	Config       auditConfig
 	Categories   []auditCategoryView
 	Rows         []auditRecord
+	LinkedLogs   []usageLog
+	LinkedLogIDs map[int64]bool
 	Summary      auditSummary
 	Endpoints    []auditEndpointView
 	KeywordsText string
@@ -61,6 +63,23 @@ func (a *app) auditPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "audit records unavailable", http.StatusInternalServerError)
 		return
 	}
+	logIDs := make([]int64, 0, len(rows))
+	seenLogIDs := make(map[int64]bool, len(rows))
+	for _, row := range rows {
+		if row.UsageLogID > 0 && !seenLogIDs[row.UsageLogID] {
+			seenLogIDs[row.UsageLogID] = true
+			logIDs = append(logIDs, row.UsageLogID)
+		}
+	}
+	linkedLogs, err := a.logs.logsByIDs(r.Context(), logIDs)
+	if err != nil {
+		http.Error(w, "linked request logs unavailable", http.StatusInternalServerError)
+		return
+	}
+	linkedLogIDs := make(map[int64]bool, len(linkedLogs))
+	for _, entry := range linkedLogs {
+		linkedLogIDs[entry.ID] = true
+	}
 	summary, err := a.logs.auditStats(r.Context())
 	if err != nil {
 		http.Error(w, "audit summary unavailable", http.StatusInternalServerError)
@@ -87,7 +106,7 @@ func (a *app) auditPage(w http.ResponseWriter, r *http.Request) {
 		return "/audit?" + q.Encode()
 	}
 	render(w, auditPageTemplate, auditPageData{User: u, CSRF: session.CSRF, Config: cfg,
-		Categories: categories, Rows: rows, Summary: summary, Endpoints: endpoints,
+		Categories: categories, Rows: rows, LinkedLogs: linkedLogs, LinkedLogIDs: linkedLogIDs, Summary: summary, Endpoints: endpoints,
 		KeywordsText: strings.Join(cfg.Keywords, "\n"), UserFilter: userFilter, ResultFilter: resultFilter,
 		Page: page, PreviousURL: pageURL(page - 1), NextURL: pageURL(page + 1), HasNext: hasNext,
 		Saved: query.Get("saved") == "1"}, a.cfg.GitHubURL)
@@ -140,13 +159,13 @@ func (a *app) saveAuditSettings(w http.ResponseWriter, r *http.Request) {
 		endpoint.Model = strings.TrimSpace(r.PostForm.Get(prefix + "model"))
 		baseURL := strings.TrimSpace(r.PostForm.Get(prefix + "base_url"))
 		parsed, parseErr := url.Parse(strings.TrimRight(baseURL, "/"))
-		if parseErr != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		if parseErr != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Path == "" || parsed.Path == "/" ||
 			parsed.Scheme != "https" && !(parsed.Scheme == "http" && allowedCPAHTTPHost(parsed.Hostname(), a.cfg.PublicURL != nil && a.cfg.PublicURL.Hostname() == "localhost")) ||
-			strings.HasSuffix(parsed.Path, "/systemone") {
-			adminMutationError(w, r, "TypeSafe 根地址须为可访问的 HTTPS 或内网 HTTP 地址，且不包含 /systemone", 400)
+			parsed.Opaque != "" {
+			adminMutationError(w, r, "请填写包含完整路径的 HTTPS 或内网 HTTP 审计接口地址", 400)
 			return
 		}
-		endpoint.BaseURL = parsed.String()
+		endpoint.BaseURL = baseURL
 		if r.PostForm.Get(prefix+"clear_key") == "on" {
 			endpoint.APIKeySealed = ""
 		}

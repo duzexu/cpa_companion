@@ -59,6 +59,7 @@ func TestForwardModeUsesOnlyAssignedPrefixThroughOriginalCPA(t *testing.T) {
 			}})
 		case "/v1/chat/completions":
 			proxyCalls++
+			w.Header().Set("X-CPA-TRACE-ID", "20261019000000-private-index-request")
 			gotAuth = r.Header.Get("Authorization")
 			gotCallerKey = r.URL.Query().Get("key") + r.Header.Get("X-API-Key") + r.Header.Get("X-Companion-Auth-ID")
 			var body struct {
@@ -69,7 +70,7 @@ func TestForwardModeUsesOnlyAssignedPrefixThroughOriginalCPA(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]string{"model": body.Model})
 		case "/v1/models":
 			json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{
-				{"id": "first/test-model"}, {"id": "second/test-model"}, {"id": "test-model"},
+				{"id": "first/test-model", "auth_index": "private-index"}, {"id": "second/test-model"}, {"id": "test-model"},
 				{"id": "openai/gpt-test"}, {"id": "first/openai/gpt-test"}, {"id": "second/openai/gpt-test"},
 			}})
 		default:
@@ -112,11 +113,14 @@ func TestForwardModeUsesOnlyAssignedPrefixThroughOriginalCPA(t *testing.T) {
 	if first.Code != 200 || gotModel != "first/test-model" || gotAuth != "Bearer proxy-secret" || gotCallerKey != "" {
 		t.Fatalf("first route status=%d model=%q auth=%q leaked=%q", first.Code, gotModel, gotAuth, gotCallerKey)
 	}
+	if first.Header().Get("X-CPA-TRACE-ID") != "" {
+		t.Fatal("upstream credential index leaked in CPA trace response header")
+	}
 	modelRequest := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	modelRequest.Header.Set("Authorization", "Bearer "+key)
 	models := httptest.NewRecorder()
 	a.routes().ServeHTTP(models, modelRequest)
-	if models.Code != http.StatusOK || !strings.Contains(models.Body.String(), `"id":"test-model"`) || strings.Contains(models.Body.String(), `first/test-model`) || strings.Contains(models.Body.String(), `second/test-model`) || strings.Contains(models.Body.String(), `openai/gpt-test`) {
+	if models.Code != http.StatusOK || !strings.Contains(models.Body.String(), `"id":"test-model"`) || strings.Contains(models.Body.String(), `first/test-model`) || strings.Contains(models.Body.String(), `second/test-model`) || strings.Contains(models.Body.String(), `openai/gpt-test`) || strings.Contains(models.Body.String(), `private-index`) {
 		t.Fatalf("models were not filtered to the assigned account: status=%d body=%s", models.Code, models.Body.String())
 	}
 	alias := call("/v1/chat/completions", `{"model":"openai/gpt-test"}`)

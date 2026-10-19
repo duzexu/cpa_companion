@@ -27,7 +27,7 @@ var auditCategories = []auditCategory{
 	{"violence/graphic", 95, "Does the user input request or describe graphic violence or gore?"},
 }
 
-const defaultSystemOneBaseURL = "https://ai-gateway.vercel.sh/typesafe/v1"
+const defaultSystemOneURL = "https://ai-gateway.vercel.sh/typesafe/v1/systemone"
 const defaultSystemOneModel = "jev-latest"
 
 type auditConfig struct {
@@ -48,7 +48,7 @@ type auditEndpoint struct {
 }
 
 func defaultAuditConfig() auditConfig {
-	c := auditConfig{Endpoints: []auditEndpoint{{ID: "primary", Name: "主接口", BaseURL: defaultSystemOneBaseURL, Model: defaultSystemOneModel}}, SamplePercent: 10, TimeoutMS: 2500, Thresholds: make(map[string]int, len(auditCategories))}
+	c := auditConfig{Endpoints: []auditEndpoint{{ID: "primary", Name: "主接口", BaseURL: defaultSystemOneURL, Model: defaultSystemOneModel}}, SamplePercent: 10, TimeoutMS: 2500, Thresholds: make(map[string]int, len(auditCategories))}
 	for _, category := range auditCategories {
 		c.Thresholds[category.Name] = category.Default
 	}

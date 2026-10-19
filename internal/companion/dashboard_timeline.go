@@ -22,11 +22,29 @@ const dashboardTimelineScript = `<script>
   const dateText = value => new Date(value + 8 * 3600000).toISOString().slice(5, 10);
   const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
   const today = dayStart(Date.now());
-  const nextStart = rows.map(row => row.start).filter(start => Number.isFinite(start) && start > today + 14 * dayMs).sort((a, b) => a - b)[0];
-  let calendarStart = nextStart && rows.every(row => row.end <= today || row.start > today + 14 * dayMs) ? dayStart(nextStart) : today;
-  let calendarDays = 14;
+  const finiteStarts = rows.map(row => row.start).filter(Number.isFinite);
+  const finiteEnds = rows.map(row => row.end).filter(Number.isFinite);
+  const firstStart = finiteStarts.length ? Math.min(...finiteStarts) : -Infinity;
+  const lastEnd = finiteEnds.length ? Math.max(...finiteEnds) : Infinity;
+  const fullStart = dayStart(firstStart);
+  const fullDays = Math.ceil((lastEnd - fullStart) / dayMs);
+  const canShowFull = rows.length > 0 && Number.isFinite(firstStart) && finiteEnds.length === rows.length && fullDays > 0 && fullDays <= 60;
+  const relevant = rows.filter(row => row.end > Date.now());
+  const upcomingStarts = relevant.map(row => row.start).filter(Number.isFinite);
+  const focusStart = upcomingStarts.length ? Math.min(...upcomingStarts) : today;
+  const defaultStart = relevant.length ? Math.max(dayStart(focusStart), today - 13 * dayMs) :
+    Number.isFinite(lastEnd) ? dayStart(lastEnd - 1) - 13 * dayMs : today;
+  let calendarStart = canShowFull ? fullStart : defaultStart;
+  let calendarDays = canShowFull ? Math.max(7, fullDays) : 14;
   const board = timeline.querySelector('[data-availability-board]');
   const period = timeline.querySelector('[data-availability-period]');
+  const fullButton = timeline.querySelector('[data-availability-full]');
+  if (!canShowFull) fullButton.hidden = true;
+  function updateViewButtons(active) {
+    timeline.querySelectorAll('[data-availability-days], [data-availability-full]').forEach(item =>
+      item.classList.toggle('active', item === active));
+  }
+  updateViewButtons(canShowFull ? fullButton : timeline.querySelector('[data-availability-days="14"]'));
   function mergedSpans() {
     const spans = rows.map(row => ({start: row.start, end: row.end})).sort((a, b) => a.start - b.start);
     const merged = [];
@@ -43,7 +61,7 @@ const dashboardTimelineScript = `<script>
     const inner = document.createElement('div');
     inner.className = 'availability-inner';
     inner.style.setProperty('--availability-days', String(calendarDays));
-    inner.style.setProperty('--availability-min-width', calendarDays === 7 ? '680px' : '850px');
+    inner.style.setProperty('--availability-min-width', calendarDays === 7 ? '680px' : Math.max(850, 165 + calendarDays * 45) + 'px');
     const header = document.createElement('div');
     header.className = 'availability-head';
     const heading = document.createElement('div');
@@ -116,9 +134,15 @@ const dashboardTimelineScript = `<script>
   timeline.querySelector('[data-availability-today]').addEventListener('click', () => { calendarStart = dayStart(Date.now()); render(); });
   timeline.querySelectorAll('[data-availability-days]').forEach(button => button.addEventListener('click', () => {
     calendarDays = Number(button.dataset.availabilityDays);
-    timeline.querySelectorAll('[data-availability-days]').forEach(item => item.classList.toggle('active', item === button));
+    updateViewButtons(button);
     render();
   }));
+  fullButton.addEventListener('click', () => {
+    calendarStart = fullStart;
+    calendarDays = Math.max(7, fullDays);
+    updateViewButtons(fullButton);
+    render();
+  });
   render();
 })();
 </script>`
