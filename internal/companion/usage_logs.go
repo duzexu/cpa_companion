@@ -82,7 +82,7 @@ func (s usageSummary) SuccessPercent() int {
 }
 
 type trafficBucket struct {
-	Label                       string
+	Label, EndLabel             string
 	Success, Failed             int64
 	SuccessHeight, FailedHeight int
 }
@@ -107,11 +107,17 @@ func (s *usageLogStore) traffic(ctx context.Context, userID string, now time.Tim
 	start := since.Truncate(10 * time.Minute)
 	buckets := make([]trafficBucket, bucketCount)
 	for i := range buckets {
-		buckets[i].Label = start.Add(time.Duration(i) * 10 * time.Minute).In(beijing).Format("15:04")
+		bucketStart := start.Add(time.Duration(i) * 10 * time.Minute)
+		buckets[i].Label = bucketStart.In(beijing).Format("15:04")
+		buckets[i].EndLabel = bucketStart.Add(10 * time.Minute).In(beijing).Format("15:04")
 	}
+	// An upstream response always records the selected account. Local 429s
+	// (including model cooldown and plan RPM) remain in request logs, but do
+	// not enter the dashboard's success-rate denominator or failure bars.
 	query := `SELECT ((at_ms / 600000) * 600000),account_id,account_prefix,
 	 COUNT(*),COALESCE(SUM(CASE WHEN status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),0)
-	 FROM usage_logs WHERE at_ms >= ? AND at_ms <= ?`
+	 FROM usage_logs WHERE at_ms >= ? AND at_ms <= ?
+	 AND NOT (status = 429 AND account_id = '')`
 	args := []any{since.UnixMilli(), now.UnixMilli()}
 	if userID != "" {
 		query += ` AND user_id = ?`
@@ -251,6 +257,13 @@ func openUsageLogs(dataDir string) (*usageLogStore, error) {
     attempts INTEGER NOT NULL DEFAULT 0
   )`,
 		`CREATE INDEX IF NOT EXISTS audit_record_details_usage ON audit_record_details(usage_log_id)`,
+		`CREATE TABLE IF NOT EXISTS model_cooldowns (
+    account_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    reset_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, model)
+  )`,
+		`CREATE INDEX IF NOT EXISTS model_cooldowns_model ON model_cooldowns(model, reset_at_ms)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			db.Close()

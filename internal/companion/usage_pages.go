@@ -77,6 +77,7 @@ func (a *app) usageDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	accountProviders := map[string]string{}
 	accountDisabled := map[string]bool{}
+	accountBlocked := map[string]bool{}
 	accountDetails := map[string]credential{}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
@@ -84,13 +85,14 @@ func (a *app) usageDashboard(w http.ResponseWriter, r *http.Request) {
 		for _, account := range accounts {
 			accountProviders[account.ID] = account.Provider
 			accountDisabled[account.ID] = account.Disabled
+			accountBlocked[account.ID] = account.BlockedAt(now)
 			accountDetails[account.ID] = account
 		}
 	}
 	activeAccounts := 0
 	if planActive {
 		for _, id := range plan.AccountIDs {
-			if plan.accountActiveAt(id, now) && !accountDisabled[id] {
+			if plan.accountActiveAt(id, now) && !accountDisabled[id] && !accountBlocked[id] {
 				activeAccounts++
 			}
 		}
@@ -173,6 +175,7 @@ func (a *app) usageDashboard(w http.ResponseWriter, r *http.Request) {
 type dashboardPlanAccount struct {
 	Label, Period, State string
 	Active               bool
+	Cooling              bool
 }
 
 func dashboardPlanAccounts(plan routingPlan, details map[string]credential, planActive bool, now time.Time) []dashboardPlanAccount {
@@ -190,6 +193,9 @@ func dashboardPlanAccounts(plan routingPlan, details map[string]credential, plan
 			} else if plan.accountActiveAt(id, now) {
 				if planActive {
 					state, active = "当前可用", true
+					if account.CoolingAt(now) {
+						state, active = account.CoolingTextAt(now), !account.BlockedAt(now)
+					}
 				} else {
 					state = "方案不可用"
 				}
@@ -202,7 +208,7 @@ func dashboardPlanAccounts(plan routingPlan, details map[string]credential, plan
 		if end == "" {
 			end = "永久"
 		}
-		accounts = append(accounts, dashboardPlanAccount{Label: label, Period: strings.ReplaceAll(start+" ～ "+end, "T", " "), State: state, Active: active})
+		accounts = append(accounts, dashboardPlanAccount{Label: label, Period: strings.ReplaceAll(start+" ～ "+end, "T", " "), State: state, Active: active, Cooling: known && account.CoolingAt(now)})
 	}
 	return accounts
 }

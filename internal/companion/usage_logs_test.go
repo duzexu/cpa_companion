@@ -264,6 +264,8 @@ func TestDashboardTrafficBucketsAndProviderAggregation(t *testing.T) {
 	for _, row := range []usageLog{
 		{At: now.Add(-17 * time.Minute), UserID: "alice", AccountID: "a", AccountPrefix: "a", Status: 200, Route: "/v1/chat/completions"},
 		{At: now.Add(-15 * time.Minute), UserID: "alice", AccountID: "b", AccountPrefix: "b", Status: 429, Route: "/v1/chat/completions"},
+		{At: now.Add(-12 * time.Minute), UserID: "alice", Status: 429, ErrorCode: "model_cooldown", Route: "/v1/chat/completions"},
+		{At: now.Add(-11 * time.Minute), UserID: "alice", Status: 429, ErrorCode: "HTTP 429", Route: "/v1/chat/completions"},
 		{At: now.Add(-7 * time.Minute), UserID: "alice", AccountID: "b", AccountPrefix: "b", Status: 200, Route: "/v1/chat/completions"},
 		{At: now.Add(-5 * time.Minute), UserID: "bob", AccountID: "b", AccountPrefix: "b", Status: 200, Route: "/v1/chat/completions"},
 	} {
@@ -285,6 +287,10 @@ func TestDashboardTrafficBucketsAndProviderAggregation(t *testing.T) {
 	}
 	if successes != 2 || failures != 1 {
 		t.Fatalf("success=%d failed=%d", successes, failures)
+	}
+	allLogs, _, err := logs.list(context.Background(), usageFilter{UserID: "alice", Since: now.Add(-time.Hour), Limit: 50})
+	if err != nil || len(allLogs) != 5 {
+		t.Fatalf("local 429s disappeared from request logs: rows=%d err=%v", len(allLogs), err)
 	}
 	providers := dashboardProviders(routingPlan{AccountIDs: []string{"a", "b"}}, true, false, accounts, map[string]string{"a": "codex", "b": "codex"})
 	if len(providers) != 1 || providers[0].Requests != 3 || providers[0].Success != 2 || providers[0].Accounts != 2 || providers[0].Points == "" {

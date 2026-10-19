@@ -26,16 +26,17 @@ import (
 )
 
 type app struct {
-	cfg           settings
-	db            *store
-	logs          *usageLogStore
-	oauth         oauth2.Config
-	proxy         *httputil.ReverseProxy
-	affinity      *routeAffinity
-	auditSessions auditSessions
-	planRPM       planRateLimiter
-	accountCache  accountCache
-	resetGate     sync.Mutex
+	cfg               settings
+	db                *store
+	logs              *usageLogStore
+	oauth             oauth2.Config
+	proxy             *httputil.ReverseProxy
+	affinity          *routeAffinity
+	auditSessions     auditSessions
+	planRPM           planRateLimiter
+	accountCache      accountCache
+	observedCooldowns observedCredentialCooldowns
+	resetGate         sync.Mutex
 }
 
 type signedPayload struct {
@@ -50,21 +51,50 @@ type signedPayload struct {
 var errTrustLevelTooLow = errors.New("Linux DO trust level is below the required minimum or unavailable")
 
 type credential struct {
-	ID               string          `json:"id"`
-	AuthIndex        string          `json:"auth_index"`
-	Name             string          `json:"name"`
-	Label            string          `json:"-"`
-	Provider         string          `json:"provider"`
-	Prefix           string          `json:"prefix"`
-	Priority         *int            `json:"priority"`
-	Source           string          `json:"source"`
-	Email            string          `json:"email"`
-	ChatGPTAccountID string          `json:"chatgpt_account_id"`
-	Status           string          `json:"status"`
-	Disabled         bool            `json:"disabled"`
-	FileBacked       bool            `json:"file_backed"`
-	Models           map[string]bool `json:"-"`
-	ResetAvailable   int             `json:"-"`
+	ID               string               `json:"id"`
+	AuthIndex        string               `json:"auth_index"`
+	Name             string               `json:"name"`
+	Label            string               `json:"-"`
+	Provider         string               `json:"provider"`
+	Prefix           string               `json:"prefix"`
+	Priority         *int                 `json:"priority"`
+	Source           string               `json:"source"`
+	Email            string               `json:"email"`
+	ChatGPTAccountID string               `json:"chatgpt_account_id"`
+	Status           string               `json:"status"`
+	Disabled         bool                 `json:"disabled"`
+	FileBacked       bool                 `json:"file_backed"`
+	Models           map[string]bool      `json:"-"`
+	ResetAvailable   int                  `json:"-"`
+	Cooldowns        []credentialCooldown `json:"cooldowns"`
+	CoolingUntil     time.Time            `json:"-"`
+	BlockedUntil     time.Time            `json:"-"`
+}
+
+type credentialCooldown struct {
+	Scope      string    `json:"scope"`
+	Reason     string    `json:"reason"`
+	RetryAt    time.Time `json:"retry_at"`
+	HTTPStatus int       `json:"http_status"`
+}
+
+func (c credential) CoolingAt(now time.Time) bool { return c.CoolingUntil.After(now) }
+func (c credential) BlockedAt(now time.Time) bool { return c.BlockedUntil.After(now) }
+func (c credential) Cooling() bool                { return c.CoolingAt(time.Now()) }
+func (c credential) CoolingText() string {
+	return c.CoolingTextAt(time.Now())
+}
+func (c credential) CoolingTextAt(now time.Time) string {
+	if !c.CoolingAt(now) {
+		return ""
+	}
+	state := "部分模型冷却中"
+	resetAt := c.CoolingUntil
+	if c.BlockedAt(now) {
+		state = "凭证冷却中"
+		resetAt = c.BlockedUntil
+	}
+	return state + " · " + resetAt.In(beijing).Format("01/02 15:04") + " 恢复"
 }
 
 func (c credential) PriorityText() string {
@@ -528,7 +558,11 @@ func (a *app) revokeKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) credentials(ctx context.Context) ([]credential, error) {
-	return a.forwardAccounts(ctx)
+	accounts, err := a.forwardAccounts(ctx)
+	if err == nil {
+		a.annotateCredentialCooldowns(ctx, accounts)
+	}
+	return accounts, err
 }
 
 func (a *app) admin(w http.ResponseWriter, r *http.Request) {
@@ -546,6 +580,7 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not list accounts", 502)
 		return
 	}
+	a.annotateCredentialCooldowns(r.Context(), accounts)
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 4)
 	for i := range accounts {

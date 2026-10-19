@@ -13,6 +13,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -521,6 +522,39 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 	}
 	session := extractRouteSession(r.Header, body)
 	namespace := affinityNamespace(userID, plan, eligible, model)
+	{
+		now := time.Now()
+		cooled := map[string]time.Time{}
+		if a.logs != nil {
+			var err error
+			cooled, err = a.logs.activeModelCooldowns(r.Context(), model, now)
+			if err != nil {
+				log.Printf("read model cooldowns: %v", err)
+				http.Error(w, "model cooldown state unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		available := eligible[:0]
+		var soonest time.Time
+		for _, account := range eligible {
+			resetAt := cooled[account.ID]
+			if credentialReset := a.credentialBlockedUntil(account, now); credentialReset.After(resetAt) {
+				resetAt = credentialReset
+			}
+			if resetAt.After(now) {
+				if soonest.IsZero() || resetAt.Before(soonest) {
+					soonest = resetAt
+				}
+				continue
+			}
+			available = append(available, account)
+		}
+		eligible = available
+		if len(eligible) == 0 {
+			writeModelCooldown(w, model, soonest, time.Now())
+			return
+		}
+	}
 	eligible = a.affinity.order(namespace, session, eligible)
 	var meter *usageCapture
 	settled := false
@@ -576,6 +610,41 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		finalCyberResponse, finalCyberAccount = buffer, account
 		activeAccount = account
 		a.proxy.ServeHTTP(buffer, attempt)
+		if buffer.status == http.StatusTooManyRequests {
+			now := time.Now()
+			resetAt, modelCooled := modelCooldownReset(buffer, now)
+			if !modelCooled {
+				resetAt = upstream429Reset(buffer.header, now)
+			}
+			credentialReset := time.Time{}
+			if modelCooled {
+				var err error
+				credentialReset, err = a.cpaCredentialCooldown(r.Context(), account.ID, now)
+				if err != nil {
+					log.Printf("query CPA credential cooldown for %s: %v", account.ID, err)
+				}
+				if credentialReset.After(now) {
+					a.observedCooldowns.recordBlocked(account.ID, credentialReset, now)
+				}
+			}
+			if !credentialReset.After(now) {
+				a.observedCooldowns.record(account.ID, resetAt, now)
+			}
+			a.refreshStaleAccounts()
+			if modelCooled && !credentialReset.After(now) && a.logs != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				if err := a.logs.recordModelCooldown(ctx, account.ID, model, resetAt); err != nil {
+					log.Printf("record model cooldown for %s: %v", account.ID, err)
+				} else {
+					seconds := int((time.Until(resetAt) + time.Second - 1) / time.Second)
+					if seconds < 1 {
+						seconds = 1
+					}
+					buffer.header.Set("Retry-After", strconv.Itoa(seconds))
+				}
+				cancel()
+			}
+		}
 		retry := buffer.retryable()
 		// CPA rejected a prefix our snapshot considered routable: the account
 		// was removed, disabled or lost the model. Refresh in the background and
