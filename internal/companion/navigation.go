@@ -1,5 +1,12 @@
 package companion
 
+// Page scripts register their initializers before the navigation runtime starts.
+// Navigated pages use the same registration path after their DOM is replaced.
+const moduleBootstrapScript = `<script>
+window.__companionPendingModules = [];
+window.__companionRegister = (name, mount) => window.__companionPendingModules.push({name, mount});
+</script>`
+
 // Sidebar navigation keeps the shared shell mounted while replacing the
 // server-rendered page. Ordinary links and form submissions remain native.
 const navigationScript = `<script>
@@ -9,6 +16,31 @@ const navigationScript = `<script>
   const nonce = document.currentScript.nonce;
   let pending;
   let sequence = 0;
+  let activeModules = [];
+
+  function disposePage() {
+    for (const module of activeModules.reverse()) {
+      module.controller.abort();
+      try { module.cleanup?.(); }
+      catch (error) { console.error('Page cleanup failed:', module.name, error); }
+    }
+    activeModules = [];
+  }
+
+  function mountPage() {
+    const pendingModules = window.__companionPendingModules || [];
+    window.__companionPendingModules = [];
+    for (const module of pendingModules) {
+      const controller = new AbortController();
+      try {
+        const cleanup = module.mount(controller.signal);
+        activeModules.push({name: module.name, controller, cleanup});
+      } catch (error) {
+        controller.abort();
+        console.error('Page initialization failed:', module.name, error);
+      }
+    }
+  }
 
   function settleAvatar() {
     document.querySelectorAll('.avatar img').forEach(img => {
@@ -17,6 +49,7 @@ const navigationScript = `<script>
     });
   }
   settleAvatar();
+  mountPage();
 
   async function navigate(destination, push) {
     const url = new URL(destination, location.href);
@@ -48,11 +81,7 @@ const navigationScript = `<script>
         return;
       }
 
-      const oldStyles = [...document.head.querySelectorAll('style')].slice(1);
-      const newStyles = [...next.head.querySelectorAll('style')].slice(1);
-      newStyles.forEach(style => document.head.append(style.cloneNode(true)));
-      oldStyles.forEach(style => style.remove());
-      window.__companionSelectAbort?.abort();
+      disposePage();
       sidebar.replaceChildren(...nextSidebar.childNodes);
       settleAvatar();
       main.replaceWith(nextMain);
@@ -71,6 +100,7 @@ const navigationScript = `<script>
         document.body.append(script);
         script.remove();
       });
+      mountPage();
     } catch (error) {
       if (error.name !== 'AbortError' && current === sequence) location.assign(url.href);
     } finally {

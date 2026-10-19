@@ -1,12 +1,7 @@
 package companion
 
-const dashboardTimelineStyle = `<style>
-.availability{margin-bottom:18px}.availability-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.availability-toolbar strong{font-size:12px}.availability-controls{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.availability-controls button{min-width:29px;height:27px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px}.availability-controls button:hover,.availability-controls button.active{border-color:var(--primary);background:var(--surface-hover)}.availability-period{min-width:112px;text-align:center;color:var(--muted);font-size:11px}.availability-board{overflow-x:auto;border:1px solid var(--border);border-radius:9px;background:#f4faf5}.availability-inner{min-width:var(--availability-min-width,850px)}.availability-head,.availability-row{display:grid;grid-template-columns:165px minmax(0,1fr)}.availability-head{border-bottom:1px solid var(--border);background:#edf6ef}.availability-head-label,.availability-account{position:sticky;left:0;z-index:2;display:flex;align-items:center;padding:9px 10px;border-right:1px solid var(--border);background:inherit;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.availability-days{display:grid;grid-template-columns:repeat(var(--availability-days),minmax(0,1fr))}.availability-day{padding:6px 0;border-right:1px solid var(--border);text-align:center;color:var(--muted);font-size:10px}.availability-day strong{display:block;margin-top:2px;color:var(--text);font-size:10px}.availability-day.today{background:rgba(208,144,62,.12)}.availability-row{min-height:48px;border-bottom:1px solid var(--border)}.availability-row:last-child{border-bottom:0}.availability-row.aggregate{background:#ebf6ed}.availability-row.aggregate .availability-account{background:#ebf6ed}.availability-account{background:#f4faf5}.availability-account span{overflow:hidden;text-overflow:ellipsis}.availability-lane{position:relative;min-height:48px;background-image:linear-gradient(to right,var(--border) 1px,transparent 1px);background-size:calc(100% / var(--availability-days)) 100%}.availability-bar{position:absolute;top:11px;height:25px;min-width:2px;border-radius:5px}.availability-bar.available{border:1px solid #a6b7d8;background:#dbe4f6;color:#485c94}.availability-bar.past{background:#e9ece9;color:#89928c}.availability-bar.aggregate{border:1px solid #6579c3;background:#b7c7ed;color:#485c94}.availability-bar-label{display:block;overflow:hidden;padding:4px 7px;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.availability-now{position:absolute;top:0;bottom:0;z-index:1;width:2px;background:#dc9149;pointer-events:none}.availability-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:9px;color:var(--muted);font-size:10px}.availability-legend span{display:inline-flex;align-items:center;gap:5px}.availability-legend i{width:14px;height:8px;border-radius:3px;background:#dbe4f6;border:1px solid #a6b7d8}.availability-legend .past i{background:#e9ece9;border-color:#e9ece9}.availability-legend .aggregate i{background:#b7c7ed;border-color:#6579c3}.availability-legend .today i{width:2px;background:#dc9149;border:0}
-@media(max-width:720px){.availability-head,.availability-row{grid-template-columns:125px minmax(0,1fr)}}
-</style>`
-
 const dashboardTimelineScript = `<script>
-(() => {
+window.__companionRegister('dashboard-timeline', signal => {
   const timeline = document.querySelector('[data-availability]');
   if (!timeline) return;
   const cards = [...document.querySelectorAll('[data-availability-account]')];
@@ -129,20 +124,20 @@ const dashboardTimelineScript = `<script>
     addRow('方案可用时段（合集）', mergedSpans(), true);
     board.replaceChildren(inner);
   }
-  timeline.querySelector('[data-availability-prev]').addEventListener('click', () => { calendarStart -= calendarDays * dayMs; render(); });
-  timeline.querySelector('[data-availability-next]').addEventListener('click', () => { calendarStart += calendarDays * dayMs; render(); });
-  timeline.querySelector('[data-availability-today]').addEventListener('click', () => { calendarStart = dayStart(Date.now()); render(); });
+  timeline.querySelector('[data-availability-prev]').addEventListener('click', () => { calendarStart -= calendarDays * dayMs; render(); }, {signal});
+  timeline.querySelector('[data-availability-next]').addEventListener('click', () => { calendarStart += calendarDays * dayMs; render(); }, {signal});
+  timeline.querySelector('[data-availability-today]').addEventListener('click', () => { calendarStart = dayStart(Date.now()); render(); }, {signal});
   timeline.querySelectorAll('[data-availability-days]').forEach(button => button.addEventListener('click', () => {
     calendarDays = Number(button.dataset.availabilityDays);
     updateViewButtons(button);
     render();
-  }));
+  }, {signal}));
   fullButton.addEventListener('click', () => {
     calendarStart = fullStart;
     calendarDays = Math.max(7, fullDays);
     updateViewButtons(fullButton);
     render();
-  });
+  }, {signal});
   render();
-})();
+});
 </script>`

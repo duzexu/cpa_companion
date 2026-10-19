@@ -1,20 +1,7 @@
 package companion
 
-const adminPlanStyle = `<style>
-.plan-list-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end}.plan-list-actions form{margin:0}.plan-list-accounts{display:flex;flex-wrap:wrap;gap:5px;max-width:320px}.plan-list-accounts code{display:inline-block;padding:3px 6px;border:1px solid var(--border-strong);border-radius:5px;background:var(--bg);font-size:11px}.plan-list-period{display:grid;gap:2px;white-space:nowrap}.plan-dialog{width:min(1080px,calc(100vw - 28px));max-height:min(88dvh,880px);padding:0;overflow:hidden;border:1px solid var(--border-strong);border-radius:14px;background:var(--bg);color:var(--text);box-shadow:0 22px 70px rgba(30,27,24,.24)}.plan-dialog::backdrop{background:rgba(28,26,24,.5)}.plan-dialog .plan-form{display:flex;flex-direction:column;min-width:0;min-height:0;max-height:min(88dvh,880px)}.plan-dialog-head{flex:none;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:22px 26px 17px;border-bottom:1px solid var(--border);background:var(--bg)}.plan-dialog-head h2{margin:0;font-size:18px;letter-spacing:-.02em}.plan-dialog-head p{margin:5px 0 0;color:var(--muted);font-size:12px}.plan-dialog-close{display:grid;place-items:center;width:30px;height:30px;flex:none;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:23px;line-height:1}.plan-dialog-close:hover{background:var(--surface-hover);color:var(--text)}.plan-dialog-body{display:grid;gap:19px;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent;margin-right:6px;padding:22px 20px 26px 26px}.plan-dialog-body .field{display:grid;gap:7px}.plan-dialog-body .field>span,.plan-dialog-body .plan-time label,.plan-account-title{font-size:12px;font-weight:650}.plan-account-list{max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:9px;background:var(--surface);padding:0 12px}.plan-dialog-actions{flex:none;display:flex;justify-content:flex-end;gap:8px;padding:14px 26px;border-top:1px solid var(--border);background:var(--bg)}.plan-dialog-actions .button{min-width:88px}.plan-dialog .plan-account{display:grid;grid-template-columns:1fr;gap:10px;padding:13px 0}.plan-account-identity{display:flex;align-items:center;gap:9px;min-width:0;font-size:12px;font-weight:650}.plan-account-identity>span{min-width:0}.plan-account-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 90px;gap:10px;padding-left:25px}.plan-account-fields label{display:grid;gap:5px;min-width:0;color:var(--muted);font-size:11px}.plan-account-fields .input{width:100%;min-width:0}.plan-overall{padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px}.plan-overall strong{margin-right:8px}.plan-account-list{max-height:360px}.admin-toast{position:fixed;top:max(16px,env(safe-area-inset-top));left:50%;right:auto;bottom:auto;z-index:2147483647;transform:translateX(-50%);margin:0;display:flex;align-items:flex-start;gap:10px;width:max-content;max-width:min(416px,calc(100vw - 32px));padding:10px 10px 10px 14px;border:1px solid var(--border-strong);border-radius:10px;background:#fff;box-shadow:0 14px 36px rgba(30,27,24,.18),0 2px 8px rgba(30,27,24,.08);color:var(--text)}.admin-toast:not(:popover-open){display:none}.admin-toast::backdrop{background:transparent}.admin-toast-icon{display:grid;place-items:center;flex:none;width:28px;height:28px;margin-top:2px;border-radius:50%;background:rgba(15,143,101,.1);color:var(--success);font-size:16px;font-weight:750}.admin-toast-icon::before{content:"✓"}.admin-toast.error .admin-toast-icon{background:rgba(198,87,70,.1);color:var(--danger)}.admin-toast.error .admin-toast-icon::before{content:"!"}.admin-toast-message{min-width:0;flex:1;padding:4px 0;font-size:13px;font-weight:500;line-height:1.5;overflow-wrap:anywhere;white-space:pre-wrap}.admin-toast button{display:grid;place-items:center;flex:none;width:30px;height:30px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:18px;line-height:1}.admin-toast button:hover{background:var(--surface-hover);color:var(--text)}
-
-html:has(.plan-dialog[open]),body:has(.plan-dialog[open]){overflow:hidden}.plan-dialog-body::-webkit-scrollbar{width:7px}.plan-dialog-body::-webkit-scrollbar-thumb{border-radius:999px;background:var(--border-strong)}.plan-dialog-body::-webkit-scrollbar-track{background:transparent}
-.plan-window-field{display:grid;gap:10px;min-width:0}.window-hidden-picker{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.window-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.window-toolbar strong{font-size:12px}.window-controls{display:flex;align-items:center;gap:5px}.window-controls button{min-width:29px;height:27px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px;cursor:pointer}.window-controls button:hover,.window-controls button.active{border-color:var(--primary);background:var(--surface-hover)}.window-period{min-width:112px;text-align:center;color:var(--muted);font-size:11px}.window-board{overflow-x:auto;border:1px solid var(--border);border-radius:9px;background:#f4faf5}.window-board-inner{min-width:var(--window-min-width,850px)}.window-head,.window-row{display:grid;grid-template-columns:165px minmax(0,1fr)}.window-head{border-bottom:1px solid var(--border);background:#edf6ef}.window-head-label,.window-account-name{position:sticky;left:0;z-index:2;display:flex;align-items:center;padding:9px 10px;border-right:1px solid var(--border);background:inherit;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.window-days{display:grid;grid-template-columns:repeat(var(--window-days),minmax(0,1fr))}.window-day{padding:6px 0;border-right:1px solid var(--border);text-align:center;color:var(--muted);font-size:10px}.window-day strong{display:block;margin-top:2px;color:var(--text);font-size:10px}.window-day.today{background:rgba(208,144,62,.12)}.window-row{min-height:48px;border-bottom:1px solid var(--border)}.window-row:last-child{border-bottom:0}.window-row.aggregate{background:#ebf6ed}.window-row.aggregate .window-account-name{background:#ebf6ed}.window-account-name{background:#f4faf5}.window-account-name span{overflow:hidden;text-overflow:ellipsis}.window-lane{position:relative;min-height:48px;background-image:linear-gradient(to right,var(--border) 1px,transparent 1px);background-size:calc(100% / var(--window-days)) 100%}.window-bar{position:absolute;top:11px;height:25px;min-width:2px;border-radius:5px}.window-bar.busy{background:#dfe6e2;color:#61736b}.window-bar.past{background:#e9ece9;color:#89928c;cursor:not-allowed}.window-bar.free{border:1px solid #a6b7d8;background:#dbe4f6;color:#485c94;cursor:pointer}.window-bar.free:hover,.window-bar.free.chosen{border-color:#6579c3;background:#b7c7ed}.window-bar.personal{background:#e5eee7;border:1px solid #c9dbcc}.window-bar.selection{z-index:1;border:1px solid #6579c3;background:#b7c7ed;color:#485c94;pointer-events:none}.window-bar-label{display:block;overflow:hidden;padding:4px 7px;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.window-now{position:absolute;top:0;bottom:0;z-index:1;width:2px;background:#dc9149;pointer-events:none}.window-empty{padding:24px;color:var(--muted);font-size:12px;text-align:center}.window-legend{display:flex;flex-wrap:wrap;gap:12px;color:var(--muted);font-size:10px}.window-legend span{display:inline-flex;align-items:center;gap:5px}.window-legend i{width:14px;height:8px;border-radius:3px;background:#dbe4f6;border:1px solid #a6b7d8}.window-legend .busy i{background:#dfe6e2;border-color:#dfe6e2}.window-legend .past i{background:#e9ece9;border-color:#e9ece9}.window-legend .chosen i{background:#b7c7ed;border-color:#6579c3}.window-legend .today i{width:2px;background:#dc9149;border:0}
-@media(max-width:720px){.plan-account-fields{grid-template-columns:1fr 1fr;padding-left:0}.plan-account-fields label:last-child{grid-column:1 / -1}.plan-list-actions{justify-content:flex-start}.plan-list-period{white-space:normal}.plan-dialog-head{padding:18px 18px 14px}.plan-dialog-body{padding:18px 12px 18px 18px}.plan-dialog-actions{padding:12px 18px}.plan-account-list{max-height:35vh}}
-@media(max-width:480px){
-.table.plan-list td:nth-child(1){display:block;text-align:left}.table.plan-list td:nth-child(1)::before{display:block;margin-bottom:3px}
-.table.plan-list td:nth-child(1)::before{content:"方案名称"!important}.table.plan-list td:nth-child(2)::before{content:"有效期"!important}.table.plan-list td:nth-child(3)::before{content:"上游账号"!important}.table.plan-list td:nth-child(4)::before{content:"分配给"!important}.table.plan-list td:nth-child(5)::before{content:"状态"!important}.table.plan-list td:nth-child(6)::before{content:"操作"!important}
-.table.admin-accounts td:nth-child(3)::before{content:"优先级"}.table.admin-accounts td:nth-child(4)::before{content:"状态"}.table.admin-accounts td:nth-child(5)::before{content:"账号 ID"}.table.admin-accounts td:nth-child(6)::before{content:"操作"}.table.admin-users td:nth-child(2)::before{content:"当前方案"}
-}
-</style>`
-
 const adminPlanScript = `<script>
-(() => {
+window.__companionRegister('admin-plan', signal => {
   const toast = document.getElementById('admin-toast');
   const toastMessage = document.getElementById('admin-toast-message');
   let toastTimer;
@@ -39,7 +26,7 @@ const adminPlanScript = `<script>
     clearTimeout(toastTimer);
     toastTimer = setTimeout(hideToast, 6500);
   }
-  document.getElementById('admin-toast-close').addEventListener('click', hideToast);
+  document.getElementById('admin-toast-close').addEventListener('click', hideToast, {signal});
   try {
     const flash = sessionStorage.getItem('admin-plan-flash');
     if (flash) { sessionStorage.removeItem('admin-plan-flash'); showToast(flash, 'success'); }
@@ -55,17 +42,17 @@ const adminPlanScript = `<script>
         dialog.showModal();
         if (toastVisible) toast.showPopover();
       }
-    });
+    }, {signal});
   });
   document.querySelectorAll('.plan-dialog').forEach(dialog => {
-    dialog.querySelectorAll('[data-close-plan]').forEach(button => button.addEventListener('click', () => dialog.close()));
-    dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+    dialog.querySelectorAll('[data-close-plan]').forEach(button => button.addEventListener('click', () => dialog.close(), {signal}));
+    dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); }, {signal});
     dialog.addEventListener('close', () => {
       if (toast.parentNode !== dialog) return;
       if (toast.matches(':popover-open')) toast.hidePopover();
       document.body.append(toast);
       if (toastVisible) toast.showPopover();
-    });
+    }, {signal});
   });
   const storedPlans = [...document.querySelectorAll('[data-plan-entry]')].map(entry => ({
     id: entry.dataset.planId,
@@ -302,10 +289,10 @@ const adminPlanScript = `<script>
       timeline.append(inner);
     }
     rows.forEach(row => {
-      row.check.addEventListener('change', () => { refreshRow(row); updateOverall(); renderTimeline(); });
+      row.check.addEventListener('change', () => { refreshRow(row); updateOverall(); renderTimeline(); }, {signal});
       for (const field of [row.start, row.end]) {
-        field.addEventListener('focus', () => refreshMin(row));
-        field.addEventListener('pointerdown', () => refreshMin(row));
+        field.addEventListener('focus', () => refreshMin(row), {signal});
+        field.addEventListener('pointerdown', () => refreshMin(row), {signal});
         field.addEventListener('change', () => {
           refreshMin(row);
           const original = field === row.start ? row.originalStart : row.originalEnd;
@@ -314,21 +301,21 @@ const adminPlanScript = `<script>
             showToast('不能选择当前时间以前；已调整为最早可选时间', 'error');
           }
           applyBounds(row); updateOverall(); renderTimeline();
-        });
+        }, {signal});
       }
       refreshRow(row);
     });
     form.noValidate = true;
     updateOverall();
     renderTimeline();
-    form.querySelector('[data-window-prev]').addEventListener('click', () => { calendarStart -= calendarDays * dayMs; renderTimeline(); });
-    form.querySelector('[data-window-next]').addEventListener('click', () => { calendarStart += calendarDays * dayMs; renderTimeline(); });
-    form.querySelector('[data-window-today]').addEventListener('click', () => { calendarStart = dayStart(Date.now()); renderTimeline(); });
+    form.querySelector('[data-window-prev]').addEventListener('click', () => { calendarStart -= calendarDays * dayMs; renderTimeline(); }, {signal});
+    form.querySelector('[data-window-next]').addEventListener('click', () => { calendarStart += calendarDays * dayMs; renderTimeline(); }, {signal});
+    form.querySelector('[data-window-today]').addEventListener('click', () => { calendarStart = dayStart(Date.now()); renderTimeline(); }, {signal});
     form.querySelectorAll('[data-window-days]').forEach(button => button.addEventListener('click', () => {
       calendarDays = Number(button.dataset.windowDays);
       form.querySelectorAll('[data-window-days]').forEach(item => item.classList.toggle('active', item === button));
       renderTimeline();
-    }));
+    }, {signal}));
     form.addEventListener('submit', event => {
       const selected = selectedRows();
       if (!selected.length) {
@@ -363,7 +350,7 @@ const adminPlanScript = `<script>
           event.stopImmediatePropagation();
         }
       }
-    }, true);
+    }, {capture: true, signal});
   });
   document.querySelectorAll('[data-admin-form]').forEach(form => {
     form.addEventListener('submit', async event => {
@@ -373,7 +360,7 @@ const adminPlanScript = `<script>
       try {
         const response = await fetch(form.action, {
           method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin',
-          headers: { Accept: 'application/json' }
+          headers: { Accept: 'application/json' }, signal
         });
         if (response.redirected) { location.assign('/login'); return; }
         const jsonResponse = (response.headers.get('content-type') || '').includes('application/json');
@@ -386,14 +373,19 @@ const adminPlanScript = `<script>
         try { sessionStorage.setItem('admin-plan-flash', result.message || '方案已保存'); } catch (_) {}
         location.reload();
       } catch (_) {
-        showToast('网络连接失败，请稍后重试', 'error');
-      } finally { submit.disabled = false; }
-    });
+        if (!signal.aborted) showToast('网络连接失败，请稍后重试', 'error');
+      } finally { if (!signal.aborted) submit.disabled = false; }
+    }, {signal});
   });
-})();
+  return () => {
+    clearTimeout(toastTimer);
+    if (toast.matches(':popover-open')) toast.hidePopover();
+    document.querySelectorAll('.plan-dialog[open]').forEach(dialog => dialog.close());
+  };
+});
 </script>`
 
-const adminPlanTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>分流方案 · CPA Companion</title>` + pageStyle + planStyle + adminPlanStyle + `</head><body>
+const adminPlanTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>分流方案 · CPA Companion</title>` + stylesheetLink + `</head><body>
 <div class="shell"><aside class="sidebar"><a class="brand" href="/keys"><img class="brand-mark" src="/assets/logo.png" width="30" height="30" alt=""><span class="brand-copy"><span class="brand-title">CPA Companion</span>` + brandVersionTemplate + `</span></a><nav class="nav"><span class="nav-label">工作台</span><a class="nav-link" href="/dashboard">仪表盘</a><a class="nav-link" href="/keys">我的密钥</a><a class="nav-link active" href="/admin">分流方案</a><a class="nav-link" href="/audit">内容审计</a><a class="nav-link" href="/prices">模型价格</a><a class="nav-link" href="/logs">使用日志</a></nav>` + sidebarGitHubTemplate + `<div class="sidebar-footer"><div class="identity"><span class="avatar"><span class="avatar-fallback">C</span>{{if .User.AvatarURL}}<img src="{{.User.AvatarURL}}" alt="" referrerpolicy="no-referrer">{{end}}</span><span class="identity-copy"><span class="identity-name">{{.User.Username}}</span><span class="identity-meta">{{.User.ID}}</span></span></div><form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="logout">退出登录</button></form></div></aside>
 <main class="content"><div class="content-inner"><header class="page-head"><div><h1>分流方案</h1><p>设置有效期、上游账号及共享的重置次数。同一账号在重叠时间只能属于一个方案，每个方案只能分配给一位用户。</p></div></header><div class="stack">
 <section class="surface surface-pad"><div class="surface-head"><div><h2 class="surface-title">分流方案</h2><p class="surface-description">在列表中查看方案，点击编辑调整配置；变更会立即影响已分配用户。</p></div><button type="button" class="button" data-open-plan="new">创建方案</button></div>
@@ -404,4 +396,4 @@ const adminPlanTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset
 <dialog class="plan-dialog" id="plan-dialog-new" aria-labelledby="plan-dialog-title-new"><form class="plan-form" method="post" action="/admin/plans" data-plan-form data-admin-form><input type="hidden" name="csrf" value="{{.CSRF}}"><div class="plan-dialog-head"><div><h2 id="plan-dialog-title-new">创建分流方案</h2><p>配置有效期、上游账号、重置次数、每分钟请求数和可选的使用额度。</p></div><button type="button" class="plan-dialog-close" data-close-plan aria-label="关闭">×</button></div><div class="plan-dialog-body"><label class="field"><span>方案名称</span><input class="input" name="name" maxlength="80" required placeholder="例如：团队标准方案"></label><div class="plan-overall" data-overall><strong>方案有效期</strong>选择账号后，由各账号时段合并得出。</div><label class="field"><span>每分钟请求数（RPM）</span><input class="input" type="number" name="rpm" min="0" max="1000000" step="1" value="0" required><small class="minor">0 表示不限制；按方案统计最近 60 秒的请求。</small></label><label class="field"><span>使用额度（USD，可选）</span><input class="input" type="number" name="budget_usd" min="0.000001" max="9000000" step="0.000001" placeholder="留空表示不限制"></label><div class="plan-window-field"><div class="window-toolbar"><strong>账号可用时段 · 北京时间</strong><div class="window-controls"><button type="button" data-window-prev aria-label="上一时间段">‹</button><span class="window-period" data-window-period></span><button type="button" data-window-next aria-label="下一时间段">›</button><button type="button" data-window-today>今天</button><button type="button" data-window-days="7">7 天</button><button type="button" data-window-days="14" class="active">14 天</button></div></div><div class="window-board" data-window-timeline></div><div class="window-legend"><span><i></i>各账号可用时段（点击账号行选择）</span><span class="busy"><i></i>已被其他方案占用</span><span class="past"><i></i>过去时间不可选</span><span class="chosen"><i></i>方案已选时段</span><span class="today"><i></i>当前时间</span></div></div><p class="minor" data-window-help>先选择上游账号，再分别设置账号时段。</p><div><div class="plan-account-title">可用上游账号</div><p class="minor">至少选择一个账号；分别设置时间，方案有效期是账号时段的合集。重置次数默认为 0。</p><div class="plan-account-list">{{range .Accounts}}{{if not .Disabled}}<div class="plan-account" data-plan-account-row><label class="plan-account-identity"><input type="checkbox" name="account_id" value="{{.ID}}" data-account-label="{{.Provider}} · {{.Prefix}}"><span>{{.Provider}} · {{.Prefix}} <span class="minor">ID {{.ID}} · 优先级 {{.PriorityText}} · 可分配重置 {{.ResetAvailable}}</span></span></label><div class="plan-account-fields"><label>开始时间（北京时间）<input class="input" type="datetime-local" name="starts_at_{{.ID}}" data-account-start></label><label>结束时间（北京时间）<input class="input" type="datetime-local" name="ends_at_{{.ID}}" data-account-end></label><label>重置次数<input class="input" type="number" min="0" name="reset_{{.ID}}" value="0" max="{{.ResetAvailable}}" aria-label="{{.Prefix}} 重置次数（可分配 {{.ResetAvailable}}）"></label></div></div>{{end}}{{end}}</div></div></div><div class="plan-dialog-actions"><button type="button" class="button secondary" data-close-plan>取消</button><button type="submit" class="button">创建方案</button></div></form></dialog>
 {{range $plan := .Plans}}<dialog class="plan-dialog" id="plan-dialog-{{$plan.ID}}" aria-labelledby="plan-dialog-title-{{$plan.ID}}"><form class="plan-form" method="post" action="/admin/plans" data-plan-form data-admin-form><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{$plan.ID}}"><div class="plan-dialog-head"><div><h2 id="plan-dialog-title-{{$plan.ID}}">编辑分流方案</h2><p>保存后立即影响已分配用户。</p></div><button type="button" class="plan-dialog-close" data-close-plan aria-label="关闭">×</button></div><div class="plan-dialog-body"><label class="field"><span>方案名称</span><input class="input" name="name" maxlength="80" required value="{{$plan.Name}}"></label><div class="plan-overall" data-overall><strong>方案有效期</strong>由各账号时段合并得出。</div><label class="field"><span>每分钟请求数（RPM）</span><input class="input" type="number" name="rpm" min="0" max="1000000" step="1" value="{{$plan.RPM}}" required><small class="minor">0 表示不限制；按方案统计最近 60 秒的请求。</small></label><label class="field"><span>使用额度（USD，可选）</span><input class="input" type="number" name="budget_usd" min="0.000001" max="9000000" step="0.000001" placeholder="留空表示不限制" value="{{$plan.BudgetInput}}"></label><div class="plan-window-field"><div class="window-toolbar"><strong>账号可用时段 · 北京时间</strong><div class="window-controls"><button type="button" data-window-prev aria-label="上一时间段">‹</button><span class="window-period" data-window-period></span><button type="button" data-window-next aria-label="下一时间段">›</button><button type="button" data-window-today>今天</button><button type="button" data-window-days="7">7 天</button><button type="button" data-window-days="14" class="active">14 天</button></div></div><div class="window-board" data-window-timeline></div><div class="window-legend"><span><i></i>各账号可用时段（点击账号行选择）</span><span class="busy"><i></i>已被其他方案占用</span><span class="past"><i></i>过去时间不可选</span><span class="chosen"><i></i>方案已选时段</span><span class="today"><i></i>当前时间</span></div></div><p class="minor" data-window-help>先选择上游账号，再分别设置账号时段。</p><div><div class="plan-account-title">可用上游账号</div><p class="minor">至少选择一个账号；占用时间不能与其他方案重叠。重置次数按上游账号共享，已扣除其他方案的预留。</p><div class="plan-account-list">{{range $account := $.Accounts}}{{if not $account.Disabled}}<div class="plan-account" data-plan-account-row><label class="plan-account-identity"><input type="checkbox" name="account_id" value="{{$account.ID}}" data-account-label="{{$account.Provider}} · {{$account.Prefix}}" {{if $plan.HasAccount $account.ID}}checked{{end}}><span>{{$account.Provider}} · {{$account.Prefix}} <span class="minor">ID {{$account.ID}} · 优先级 {{$account.PriorityText}} · 可分配重置 {{$plan.ResetCap $account.ID}}</span></span></label><div class="plan-account-fields"><label>开始时间（北京时间）<input class="input" type="datetime-local" name="starts_at_{{$account.ID}}" data-account-start value="{{if $plan.HasAccount $account.ID}}{{$plan.AccountStartInput $account.ID}}{{end}}"></label><label>结束时间（北京时间）<input class="input" type="datetime-local" name="ends_at_{{$account.ID}}" data-account-end value="{{if $plan.HasAccount $account.ID}}{{$plan.AccountEndInput $account.ID}}{{end}}"></label><label>重置次数<input class="input" type="number" min="0" name="reset_{{$account.ID}}" value="{{$plan.ResetLimit $account.ID}}" max="{{$plan.ResetCap $account.ID}}" aria-label="{{$account.Prefix}} 重置次数（可分配 {{$plan.ResetCap $account.ID}}）"></label></div></div>{{end}}{{end}}</div></div></div><div class="plan-dialog-actions"><button type="button" class="button secondary" data-close-plan>取消</button><button type="submit" class="button">保存方案</button></div></form></dialog>{{end}}
 <div class="admin-toast" id="admin-toast" popover="manual"><span class="admin-toast-icon" aria-hidden="true"></span><span class="admin-toast-message" id="admin-toast-message"></span><button type="button" id="admin-toast-close" aria-label="关闭提示">×</button></div>
-` + confirmScript + adminPlanScript + selectControlScript + navigationScript + `</body></html>`
+` + moduleBootstrapScript + confirmScript + adminPlanScript + selectControlScript + navigationScript + `</body></html>`

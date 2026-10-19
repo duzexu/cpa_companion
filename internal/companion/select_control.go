@@ -3,11 +3,11 @@ package companion
 // The native select remains in the form so submission and non-JavaScript
 // fallback keep working. JavaScript supplies the visible, styled picker.
 const selectControlScript = `<script>
-(() => {
-  window.__companionSelectAbort?.abort();
-  const controller = new AbortController();
-  window.__companionSelectAbort = controller;
+window.__companionRegister('select-control', signal => {
+  const enhancements = [];
   document.querySelectorAll('select:not([data-select-enhanced])').forEach((select, number) => {
+    const oldTabIndex = select.getAttribute('tabindex');
+    const oldAriaHidden = select.getAttribute('aria-hidden');
     select.dataset.selectEnhanced = 'true';
     const wrapper = document.createElement('span');
     wrapper.className = 'select-control';
@@ -48,6 +48,7 @@ const selectControlScript = `<script>
     menu.setAttribute('popover', 'auto');
     trigger.setAttribute('aria-controls', menu.id);
     document.body.append(menu);
+    enhancements.push({select, wrapper, menu, oldTabIndex, oldAriaHidden});
     let optionButtons = [];
 
     const sync = () => {
@@ -99,7 +100,7 @@ const selectControlScript = `<script>
       const index = direction < 0 ? Math.max(0, selected - 1) : direction > 0 ? Math.min(enabled.length - 1, selected + 1) : Math.max(0, selected);
       enabled[index]?.focus({preventScroll: true});
     };
-    trigger.addEventListener('click', () => menu.matches(':popover-open') ? menu.hidePopover() : open());
+    trigger.addEventListener('click', () => menu.matches(':popover-open') ? menu.hidePopover() : open(), {signal});
     trigger.addEventListener('keydown', event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
         event.preventDefault();
@@ -109,7 +110,7 @@ const selectControlScript = `<script>
           (event.key === 'Home' ? enabled[0] : enabled[enabled.length - 1])?.focus({preventScroll: true});
         }
       }
-    });
+    }, {signal});
     menu.addEventListener('keydown', event => {
       const enabled = optionButtons.filter(item => !item.disabled);
       const current = enabled.indexOf(document.activeElement);
@@ -127,14 +128,23 @@ const selectControlScript = `<script>
       } else return;
       event.preventDefault();
       enabled[next]?.focus({preventScroll: true});
-    });
-    menu.addEventListener('toggle', () => trigger.setAttribute('aria-expanded', String(menu.matches(':popover-open'))));
+    }, {signal});
+    menu.addEventListener('toggle', () => trigger.setAttribute('aria-expanded', String(menu.matches(':popover-open'))), {signal});
     window.addEventListener('scroll', event => {
       if (menu.matches(':popover-open') && !menu.contains(event.target)) menu.hidePopover();
-    }, {capture: true, signal: controller.signal});
-    window.addEventListener('resize', () => { if (menu.matches(':popover-open')) position(); }, {signal: controller.signal});
-    select.addEventListener('change', sync);
+    }, {capture: true, signal});
+    window.addEventListener('resize', () => { if (menu.matches(':popover-open')) position(); }, {signal});
+    select.addEventListener('change', sync, {signal});
     sync();
   });
-})();
+  return () => enhancements.forEach(({select, wrapper, menu, oldTabIndex, oldAriaHidden}) => {
+    if (menu.matches(':popover-open')) menu.hidePopover();
+    menu.remove();
+    if (wrapper.isConnected) wrapper.replaceWith(select);
+    select.classList.remove('select-control-native');
+    delete select.dataset.selectEnhanced;
+    if (oldTabIndex === null) select.removeAttribute('tabindex'); else select.setAttribute('tabindex', oldTabIndex);
+    if (oldAriaHidden === null) select.removeAttribute('aria-hidden'); else select.setAttribute('aria-hidden', oldAriaHidden);
+  });
+});
 </script>`

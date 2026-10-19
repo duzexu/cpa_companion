@@ -16,16 +16,15 @@ var requestBodyTimeout = 60 * time.Second
 
 // confirmScript replaces inline onsubmit handlers, which the CSP blocks.
 const confirmScript = `<script>
-if (!window.__companionConfirmInstalled) {
-window.__companionConfirmInstalled = true;
+window.__companionRegister('confirm', signal => {
 document.addEventListener('submit', event => {
   const message = event.target.dataset.confirm;
   if (message && !window.confirm(message)) {
     event.preventDefault();
     event.stopImmediatePropagation();
   }
-}, true);
-}
+}, {capture: true, signal});
+});
 </script>`
 
 // withSecurity applies browser hardening to the web UI and a body read
@@ -76,7 +75,7 @@ func (b *deadlineBody) Read(p []byte) (int, error) {
 // carry server-computed widths, so styles stay inline-capable; the page loads
 // no external resources.
 func pageCSP(nonce string) string {
-	return "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'unsafe-inline'; img-src 'self' data: https://linux.do https://*.linux.do https://cdn.ldstatic.com https://avatars.discourse-cdn.com; " +
+	return "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://linux.do https://*.linux.do https://cdn.ldstatic.com https://avatars.discourse-cdn.com; " +
 		"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 }
 
