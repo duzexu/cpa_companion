@@ -460,7 +460,7 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 	// Validation, pricing and the forwarded body must all read the same field.
-	_, model, err := requestModel(body)
+	payload, model, err := requestModel(body)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
@@ -479,6 +479,13 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 	if len(eligible) == 0 {
 		http.Error(w, "model unavailable in plan accounts", 404)
 		return
+	}
+	if r.URL.Path == "/v1/responses" {
+		body, err = ensureResponsesLiteContext(r.Header, payload, body)
+		if err != nil {
+			http.Error(w, "invalid Responses Lite request", http.StatusBadRequest)
+			return
+		}
 	}
 	if err := a.inspectContent(r.Context(), r.Header, body, audit); err != nil {
 		log.Printf("content audit failed: %v", err)

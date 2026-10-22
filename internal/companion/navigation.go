@@ -115,7 +115,7 @@ const navigationScript = `<script>
     const url = new URL(link.href);
     if (url.origin !== location.origin || !routes.has(url.pathname)) return;
     event.preventDefault();
-    if (url.href !== location.href) navigate(url.href, true);
+    navigate(url.href, url.href !== location.href);
   });
   window.addEventListener('popstate', () => navigate(location.href, false));
 })();
