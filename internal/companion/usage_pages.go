@@ -471,7 +471,8 @@ func (a *app) usageLogsPage(w http.ResponseWriter, r *http.Request) {
 		Rows                                               []usageLog
 		HasPrevious, HasNext                               bool
 		PreviousURL, NextURL                               string
+		Cleared                                            bool
 	}{u, p.CSRF, admin, all, scopeURL("self"), scopeURL("all"), resetURL,
 		since.In(beijing).Format(logTimeLayout), until.Add(-time.Minute).In(beijing).Format(logTimeLayout),
-		page, int((summary.Requests + 49) / 50), logID, userInput, model, keyID, accountID, route, status, summary, minuteSummary, rows, page > 1, more, pageURL(page - 1), pageURL(page + 1)}, a.cfg.GitHubURL)
+		page, int((summary.Requests + 49) / 50), logID, userInput, model, keyID, accountID, route, status, summary, minuteSummary, rows, page > 1, more, pageURL(page - 1), pageURL(page + 1), q.Get("cleared") == "1"}, a.cfg.GitHubURL)
 }

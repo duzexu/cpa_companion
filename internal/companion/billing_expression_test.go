@@ -36,6 +36,17 @@ func TestBillingExpressionTierAndUnsupportedFields(t *testing.T) {
 	}
 }
 
+func TestIgnoreUnsupportedPriceFieldsKeepsMeasuredTerms(t *testing.T) {
+	expr := `len <= 272000 ? tier("0_272k", p * 2 + cr * 0.1 + cc * 2.5 + cc12h * 10 + c * 10) : tier("272k_plus", p * 4 + cr * 0.2 + cc * 5 + cc12h * 20 + c * 15)`
+	adjusted, changed := ignoreUnsupportedPriceFields(expr)
+	if !changed || strings.Contains(adjusted, "cc12h") || !strings.Contains(adjusted, "p * 2") || !strings.Contains(adjusted, "c * 15") {
+		t.Fatalf("unsupported field was not isolated: changed=%t expression=%q", changed, adjusted)
+	}
+	if err := validatePriceExpression(adjusted); err != nil {
+		t.Fatalf("adjusted expression is not billable: %v", err)
+	}
+}
+
 func TestPriceListSummarizesTieredRates(t *testing.T) {
 	view := modelPriceView{Model: "tiered-model", Configured: true, Price: modelPrice{
 		Expression: `len <= 272000 ? tier("0_272k", p * 2 + cr * 0.1 + cc * 2.5 + c * 10) : tier("272k_plus", p * 4 + cr * 0.2 + cc * 5 + c * 15)`,

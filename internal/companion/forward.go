@@ -480,6 +480,12 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		http.Error(w, "model unavailable in plan accounts", 404)
 		return
 	}
+	eligible = a.filterWeeklyQuotaAccounts(r.Context(), plan, eligible)
+	if len(eligible) == 0 {
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, "all assigned upstream accounts are below the weekly quota threshold", http.StatusTooManyRequests)
+		return
+	}
 	if r.URL.Path == "/v1/responses" {
 		body, err = ensureResponsesLiteContext(r.Header, payload, body)
 		if err != nil {
@@ -567,7 +573,7 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 	settled := false
 	var activeAccount credential
 	if meterableRoute(r.URL.Path) {
-		meter = &usageCapture{target: w, route: r.URL.Path}
+		meter = &usageCapture{target: w, route: r.URL.Path, model: model}
 	}
 	// ReverseProxy panics with http.ErrAbortHandler when a streamed response is
 	// cut off. Preserve the selected account and delivered usage before the
@@ -577,10 +583,10 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 			if meter != nil && meter.status >= 200 && meter.status < 300 {
 				audit.AccountID, audit.AccountPrefix = activeAccount.ID, activeAccount.Prefix
 				if priced && !settled {
-					usage, charge, estimated := a.settleUsage(reservation, price, meter, len(body), true)
+					usage, charge, estimated := a.settleUsage(reservation, price, meter, body, true)
 					setAuditUsage(audit, usage, charge, estimated)
 				} else if !priced {
-					a.recordUnpricedUsage(audit, meter, model, len(body), true)
+					a.recordUnpricedUsage(audit, meter, model, body, true)
 				}
 			}
 			panic(recovered)
@@ -606,6 +612,7 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 			http.Error(w, err.Error(), 400)
 			return
 		}
+		a.recordWeeklyRequest(account.ID, time.Now())
 		// Keep CPA's JSON and SSE response readable so structured upstream
 		// policy errors can be recognized without altering the forwarded body.
 		attempt.Header.Del("Accept-Encoding")
@@ -673,21 +680,65 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		audit.AccountID, audit.AccountPrefix = account.ID, account.Prefix
 		if priced && meter.status >= 200 && meter.status < 300 {
 			settled = true
-			usage, charge, estimated := a.settleUsage(reservation, price, meter, len(body), false)
+			usage, charge, estimated := a.settleUsage(reservation, price, meter, body, false)
 			setAuditUsage(audit, usage, charge, estimated)
 		} else if meter != nil && meter.status >= 200 && meter.status < 300 {
-			a.recordUnpricedUsage(audit, meter, model, len(body), false)
+			a.recordUnpricedUsage(audit, meter, model, body, false)
 		}
 		return
 	}
 }
 
-func (a *app) recordUnpricedUsage(audit *usageLog, meter *usageCapture, model string, requestBytes int, aborted bool) {
+// filterWeeklyQuotaAccounts applies the optional per-account weekly quota
+// floor. A configured floor fails closed when CPA cannot return a recognizable
+// weekly window, so a stale or unavailable quota cannot accidentally route a
+// request to an exhausted upstream account.
+func (a *app) filterWeeklyQuotaAccounts(ctx context.Context, plan routingPlan, accounts []credential) []credential {
+	if len(accounts) == 0 {
+		return nil
+	}
+	keep := make([]bool, len(accounts))
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 4)
+	for i, account := range accounts {
+		threshold := plan.WeeklyMinimum(account.ID)
+		if threshold <= 0 {
+			keep[i] = true
+			continue
+		}
+		wg.Add(1)
+		go func(i int, account credential, threshold int) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			quotaCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			defer cancel()
+			snapshot := a.cachedQuotaSnapshot(quotaCtx, account, threshold)
+			remaining, found := weeklyQuotaAvailable(snapshot.Windows)
+			keep[i] = snapshot.WindowsErr == nil && found && remaining >= threshold
+			if snapshot.WindowsErr != nil {
+				log.Printf("weekly quota check for account %s failed: %v", account.ID, snapshot.WindowsErr)
+			} else if !found {
+				log.Printf("weekly quota check for account %s returned no weekly window", account.ID)
+			}
+		}(i, account, threshold)
+	}
+	wg.Wait()
+	filtered := make([]credential, 0, len(accounts))
+	for i, account := range accounts {
+		if keep[i] {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered
+}
+
+func (a *app) recordUnpricedUsage(audit *usageLog, meter *usageCapture, model string, requestBody []byte, aborted bool) {
 	usage, err := meter.result()
 	estimated := false
 	incomplete := aborted && !(meter.route == "/v1/responses" && meter.finalUsage && err == nil)
 	if meter.route != "/v1/images/generations" && (incomplete || err != nil && meter.route == "/v1/alpha/search") {
-		usage, estimated, err = meter.estimate(requestBytes), true, nil
+		usage, estimated, err = meter.estimate(requestBody), true, nil
 	}
 	if err != nil {
 		return
@@ -710,7 +761,7 @@ func setAuditUsage(audit *usageLog, usage tokenUsage, charge int64, estimated bo
 	audit.ChargePicoUSD, audit.Estimated = charge, estimated
 }
 
-func (a *app) settleUsage(reservation *usageReservation, price modelPrice, meter *usageCapture, requestBytes int, aborted bool) (tokenUsage, int64, bool) {
+func (a *app) settleUsage(reservation *usageReservation, price modelPrice, meter *usageCapture, requestBody []byte, aborted bool) (tokenUsage, int64, bool) {
 	usage, err := meter.result()
 	meterError := ""
 	incomplete := aborted && !(meter.route == "/v1/responses" && meter.finalUsage && err == nil)
@@ -729,9 +780,9 @@ func (a *app) settleUsage(reservation *usageReservation, price modelPrice, meter
 		// CPA forwards Codex search responses as-is, and those responses
 		// usually omit token usage. Price the request and delivered response
 		// bytes using the same conservative ratios as other fallback paths.
-		usage = meter.estimate(requestBytes)
+		usage = meter.estimate(requestBody)
 	} else if incomplete || err != nil {
-		usage = meter.estimate(requestBytes)
+		usage = meter.estimate(requestBody)
 		if !incomplete {
 			meterError = "上游响应未返回可用 Token 用量，已按估算计费"
 		}

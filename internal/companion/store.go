@@ -35,6 +35,7 @@ type routingPlan struct {
 	AccountIDs     []string              `json:"account_ids,omitempty"`
 	AccountWindows map[string]planWindow `json:"account_windows,omitempty"`
 	ResetLimits    map[string]int        `json:"reset_limits,omitempty"`
+	WeeklyMin      map[string]int        `json:"weekly_min,omitempty"`
 	ResetCaps      map[string]int        `json:"-"`
 	RPM            int                   `json:"rpm,omitempty"`
 	BudgetPicoUSD  int64                 `json:"budget_pico_usd,omitempty"`
@@ -73,6 +74,13 @@ func clonePlan(p routingPlan) routingPlan {
 			caps[id] = cap
 		}
 		p.ResetCaps = caps
+	}
+	if p.WeeklyMin != nil {
+		limits := make(map[string]int, len(p.WeeklyMin))
+		for id, limit := range p.WeeklyMin {
+			limits[id] = limit
+		}
+		p.WeeklyMin = limits
 	}
 	return p
 }
@@ -272,8 +280,9 @@ func (p routingPlan) HasAccount(id string) bool {
 	}
 	return false
 }
-func (p routingPlan) ResetLimit(id string) int { return p.ResetLimits[id] }
-func (p routingPlan) ResetCap(id string) int   { return p.ResetCaps[id] }
+func (p routingPlan) ResetLimit(id string) int    { return p.ResetLimits[id] }
+func (p routingPlan) WeeklyMinimum(id string) int { return p.WeeklyMin[id] }
+func (p routingPlan) ResetCap(id string) int      { return p.ResetCaps[id] }
 func (p routingPlan) StartInput() string {
 	if p.StartsAt == nil {
 		return ""

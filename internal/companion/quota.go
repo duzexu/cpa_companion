@@ -27,6 +27,18 @@ type quotaWindow struct {
 	ResetAt   *time.Time
 }
 
+type quotaSnapshot struct {
+	Windows    []quotaWindow
+	Reset      resetCreditStatus
+	WindowsErr error
+	ResetErr   error
+}
+
+type quotaCacheEntry struct {
+	snapshot  quotaSnapshot
+	fetchedAt time.Time
+}
+
 func (w quotaWindow) Low() bool { return w.Remaining < 30 }
 func (w quotaWindow) ResetAtText() string {
 	if w.ResetAt == nil {
@@ -187,8 +199,8 @@ func number(v any) int {
 func stringField(v any) string { s, _ := v.(string); return s }
 
 func (a *app) availableResetCount(ctx context.Context, account credential) (int, error) {
-	status, err := a.resetCreditStatus(ctx, account)
-	return status.Count, err
+	snapshot := a.fetchQuotaSnapshot(ctx, account)
+	return snapshot.Reset.Count, snapshot.ResetErr
 }
 
 func parseQuotaTime(value any) *time.Time {
@@ -331,7 +343,8 @@ func (a *app) quotaViews(ctx context.Context, u user, plan routingPlan, accounts
 			defer cancel()
 			view := &views[i]
 			account := view.Account
-			credits, _ := a.resetCreditStatus(callCtx, account)
+			snapshot := a.cachedQuotaSnapshot(callCtx, account, 0)
+			credits := snapshot.Reset
 			view.ResetAvailable = credits.Count
 			remaining := view.ResetLimit - view.ResetUsed
 			if remaining > credits.Count {
@@ -343,38 +356,211 @@ func (a *app) quotaViews(ctx context.Context, u user, plan routingPlan, accounts
 				}
 				view.ResetExpiries = append(view.ResetExpiries, resetExpiry{Order: view.ResetUsed + j + 1, ExpiresAt: expiry})
 			}
-			endpoint := ""
-			switch strings.ToLower(account.Provider) {
-			case "codex":
-				endpoint = "https://chatgpt.com/backend-api/wham/usage"
-			case "claude", "anthropic":
-				endpoint = "https://api.anthropic.com/api/oauth/usage"
-			default:
-				view.Windows, _ = a.pluginQuotaWindows(callCtx, account)
-				if len(view.Windows) == 0 {
-					view.Error = "该账号暂无可读取的额度接口"
-				}
-			}
-			if endpoint != "" {
-				result, err := a.accountCall(callCtx, account, "GET", endpoint, "", accountHeaders(account.Provider))
-				if err == nil {
-					var data map[string]any
-					data, err = decodeCall(result)
-					if err == nil {
-						view.Windows = parseQuotaWindows(account.Provider, data)
-					}
-				}
-				if err != nil {
-					view.Error = "上游额度暂不可用"
-				}
-				if err == nil && len(view.Windows) == 0 {
-					view.Error = "上游未返回可识别的额度窗口"
-				}
+			view.Windows = snapshot.Windows
+			if snapshot.WindowsErr != nil || len(view.Windows) == 0 {
+				view.Error = "上游额度暂不可用"
 			}
 		}(i)
 	}
 	wg.Wait()
 	return views
+}
+
+// quotaWindows reads the same provider-specific quota windows used by the
+// quota preview. Keeping this in one place ensures routing thresholds and the
+// UI use identical remaining-percentage semantics.
+func (a *app) quotaWindows(ctx context.Context, account credential) ([]quotaWindow, error) {
+	endpoint := ""
+	switch strings.ToLower(account.Provider) {
+	case "codex":
+		endpoint = "https://chatgpt.com/backend-api/wham/usage"
+	case "claude", "anthropic":
+		endpoint = "https://api.anthropic.com/api/oauth/usage"
+	default:
+		return a.pluginQuotaWindows(ctx, account)
+	}
+	result, err := a.accountCall(ctx, account, "GET", endpoint, "", accountHeaders(account.Provider))
+	if err != nil {
+		return nil, err
+	}
+	data, err := decodeCall(result)
+	if err != nil {
+		return nil, err
+	}
+	windows := parseQuotaWindows(account.Provider, data)
+	if len(windows) == 0 {
+		return nil, errors.New("upstream returned no recognizable quota windows")
+	}
+	return windows, nil
+}
+
+func isWeeklyQuotaWindow(name string) bool {
+	s := strings.ToLower(strings.TrimSpace(name))
+	return strings.Contains(s, "周") || strings.Contains(s, "week") || strings.Contains(s, "seven_day") || strings.Contains(s, "7 day")
+}
+
+// weeklyQuotaAvailable returns the most restrictive weekly window. Providers
+// can expose separate weekly buckets (for example a general and a model
+// specific bucket), so an account is usable only when all reported weekly
+// buckets satisfy the configured threshold.
+func weeklyQuotaAvailable(windows []quotaWindow) (int, bool) {
+	remaining, found := 100, false
+	for _, window := range windows {
+		if !isWeeklyQuotaWindow(window.Name) {
+			continue
+		}
+		if window.Remaining < remaining {
+			remaining = window.Remaining
+		}
+		found = true
+	}
+	return remaining, found
+}
+
+// weeklyQuotaCacheTTL follows the distance to the configured floor: an
+// account close to the floor is refreshed quickly, while an account with a
+// large remaining margin can safely reuse a result longer. Failed and
+// unrecognizable responses use the shortest TTL so a temporary CPA outage
+// does not block an account for long after recovery.
+func weeklyQuotaCacheTTL(windows []quotaWindow, err error, threshold, recentRequests int) time.Duration {
+	const minTTL = 5 * time.Second
+	if err != nil {
+		return minTTL
+	}
+	remaining, found := weeklyQuotaAvailable(windows)
+	if !found || remaining < threshold || threshold >= 100 {
+		return minTTL
+	}
+	if threshold < 0 {
+		threshold = 0
+	}
+	maxTTL := 2 * time.Hour
+	switch {
+	case recentRequests >= 120:
+		maxTTL = 30 * time.Second
+	case recentRequests >= 60:
+		maxTTL = time.Minute
+	case recentRequests >= 30:
+		maxTTL = 5 * time.Minute
+	case recentRequests >= 10:
+		maxTTL = 30 * time.Minute
+	}
+	margin := float64(remaining-threshold) / float64(100-threshold)
+	if margin > 1 {
+		margin = 1
+	}
+	return minTTL + time.Duration(margin*float64(maxTTL-minTTL))
+}
+
+func cloneQuotaWindows(windows []quotaWindow) []quotaWindow {
+	return append([]quotaWindow(nil), windows...)
+}
+
+func cloneQuotaSnapshot(snapshot quotaSnapshot) quotaSnapshot {
+	snapshot.Windows = cloneQuotaWindows(snapshot.Windows)
+	snapshot.Reset.Expiries = append([]time.Time(nil), snapshot.Reset.Expiries...)
+	return snapshot
+}
+
+func quotaSnapshotTTL(snapshot quotaSnapshot, threshold, recentRequests int) time.Duration {
+	if snapshot.ResetErr != nil {
+		return 5 * time.Second
+	}
+	return weeklyQuotaCacheTTL(snapshot.Windows, snapshot.WindowsErr, threshold, recentRequests)
+}
+
+func (a *app) fetchQuotaSnapshot(ctx context.Context, account credential) quotaSnapshot {
+	var snapshot quotaSnapshot
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		snapshot.Windows, snapshot.WindowsErr = a.quotaWindows(ctx, account)
+	}()
+	go func() {
+		defer wg.Done()
+		snapshot.Reset, snapshot.ResetErr = a.resetCreditStatus(ctx, account)
+	}()
+	wg.Wait()
+	return snapshot
+}
+
+func (a *app) cachedQuotaSnapshot(ctx context.Context, account credential, threshold int) quotaSnapshot {
+	now := time.Now()
+	recentRequests := a.recentWeeklyRequests(account.ID, now)
+	a.quotaCacheMu.Lock()
+	entry, ok := a.quotaCache[account.ID]
+	if ok && now.Sub(entry.fetchedAt) < quotaSnapshotTTL(entry.snapshot, threshold, recentRequests) {
+		snapshot := cloneQuotaSnapshot(entry.snapshot)
+		a.quotaCacheMu.Unlock()
+		return snapshot
+	}
+	a.quotaCacheMu.Unlock()
+
+	snapshot := a.fetchQuotaSnapshot(ctx, account)
+	entry = quotaCacheEntry{snapshot: cloneQuotaSnapshot(snapshot), fetchedAt: time.Now()}
+	a.quotaCacheMu.Lock()
+	if a.quotaCache == nil {
+		a.quotaCache = make(map[string]quotaCacheEntry)
+	}
+	a.quotaCache[account.ID] = entry
+	a.quotaCacheMu.Unlock()
+	return snapshot
+}
+
+func (a *app) invalidateQuotaCache(accountID string) {
+	a.quotaCacheMu.Lock()
+	if accountID == "" {
+		a.quotaCache = nil
+	} else {
+		delete(a.quotaCache, accountID)
+	}
+	a.quotaCacheMu.Unlock()
+}
+
+func (a *app) recordWeeklyRequest(accountID string, now time.Time) {
+	if accountID == "" {
+		return
+	}
+	a.weeklyRequestMu.Lock()
+	defer a.weeklyRequestMu.Unlock()
+	if a.weeklyRequests == nil {
+		a.weeklyRequests = make(map[string][]time.Time)
+	}
+	cutoff := now.Add(-time.Hour)
+	requests := a.weeklyRequests[accountID]
+	first := 0
+	for first < len(requests) && !requests[first].After(cutoff) {
+		first++
+	}
+	if first > 0 {
+		requests = append([]time.Time(nil), requests[first:]...)
+	}
+	// The TTL policy only distinguishes up to the high-traffic bucket; keep a
+	// bounded sample instead of retaining every request timestamp for an hour.
+	if len(requests) > 120 {
+		requests = requests[len(requests)-120:]
+	}
+	a.weeklyRequests[accountID] = append(requests, now)
+}
+
+func (a *app) recentWeeklyRequests(accountID string, now time.Time) int {
+	if accountID == "" {
+		return 0
+	}
+	a.weeklyRequestMu.Lock()
+	defer a.weeklyRequestMu.Unlock()
+	requests := a.weeklyRequests[accountID]
+	cutoff := now.Add(-time.Hour)
+	first := 0
+	for first < len(requests) && !requests[first].After(cutoff) {
+		first++
+	}
+	if first > 0 {
+		requests = append([]time.Time(nil), requests[first:]...)
+		a.weeklyRequests[accountID] = requests
+	}
+	return len(requests)
 }
 
 func (a *app) pluginQuotaWindows(ctx context.Context, account credential) ([]quotaWindow, error) {
@@ -510,8 +696,12 @@ func (a *app) resetQuota(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "account unavailable", 503)
 		return
 	}
-	available, err := a.availableResetCount(r.Context(), account)
-	if err != nil || available <= 0 {
+	// A reset is a mutation, so fetch a fresh snapshot instead of trusting the
+	// display cache. The same snapshot facade still keeps the provider-specific
+	// quota and reset calls together.
+	snapshot := a.fetchQuotaSnapshot(r.Context(), account)
+	available := snapshot.Reset.Count
+	if snapshot.ResetErr != nil || available <= 0 {
 		http.Error(w, "no upstream reset credit available", 409)
 		return
 	}
@@ -520,6 +710,7 @@ func (a *app) resetQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.performReset(r.Context(), account); err != nil {
+		a.invalidateQuotaCache(account.ID)
 		if errors.Is(err, errResetNotSpent) {
 			if refundErr := a.db.refundReset(u.ID, plan.ID, id); refundErr != nil {
 				log.Printf("quota reset refund failed: %v", refundErr)
@@ -531,6 +722,7 @@ func (a *app) resetQuota(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream reset could not be confirmed; allowance reserved", 502)
 		return
 	}
+	a.invalidateQuotaCache(account.ID)
 	http.Redirect(w, r, "/keys", http.StatusSeeOther)
 }
 

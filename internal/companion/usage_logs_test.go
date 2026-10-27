@@ -297,3 +297,44 @@ func TestDashboardTrafficBucketsAndProviderAggregation(t *testing.T) {
 		t.Fatalf("provider aggregation: %+v", providers)
 	}
 }
+
+func TestClearUsageAndAuditRecords(t *testing.T) {
+	logs, err := openUsageLogs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	ctx := context.Background()
+	auditID, err := logs.insertAudit(ctx, auditRecord{At: time.Now(), UserID: "alice", Username: "Alice", KeyID: "key", Model: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := logs.insert(ctx, usageLog{At: time.Now(), UserID: "alice", KeyID: "key", Route: "/v1/responses", Status: 200, AuditIDs: []int64{auditID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := logs.clearUsageLogs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var usageCount, linkedCount, auditCount int
+	if err := logs.db.QueryRow(`SELECT COUNT(*) FROM usage_logs`).Scan(&usageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := logs.db.QueryRow(`SELECT COUNT(*) FROM audit_record_details WHERE usage_log_id IS NOT NULL`).Scan(&linkedCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := logs.db.QueryRow(`SELECT COUNT(*) FROM content_audit_records`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if usageCount != 0 || linkedCount != 0 || auditCount != 1 {
+		t.Fatalf("clear usage logs: usage=%d linked=%d audits=%d", usageCount, linkedCount, auditCount)
+	}
+	if err := logs.clearAuditRecords(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := logs.db.QueryRow(`SELECT COUNT(*) FROM content_audit_records`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 0 {
+		t.Fatalf("clear audit records left %d rows", auditCount)
+	}
+}

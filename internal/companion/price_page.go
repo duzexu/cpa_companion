@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,18 @@ import (
 const priceSourceURL = "https://basellm.github.io/llm-metadata/api/newapi/ratio_config-v1-base.json"
 
 var priceFetchURL = priceSourceURL
+
+// BaseLLM may publish dimensions that CPA does not expose in its usage
+// response yet. Keep the measurable terms in the expression and neutralize
+// unsupported dimensions instead of dropping the whole model price.
+var unsupportedPriceFields = regexp.MustCompile(`\b(?:cc1h|cc12h|ai|ao|image_count)\b`)
+
+func ignoreUnsupportedPriceFields(expression string) (string, bool) {
+	if !unsupportedPriceFields.MatchString(expression) {
+		return expression, false
+	}
+	return unsupportedPriceFields.ReplaceAllString(expression, "0"), true
+}
 
 func (a *app) pricesPage(w http.ResponseWriter, r *http.Request) {
 	u, p, ok := a.requireSession(w, r)
@@ -100,15 +113,19 @@ func (a *app) syncPrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prices := make(map[string]modelPrice)
-	unsupported := 0
+	ignored := 0
 	for _, model := range models {
 		expr := strings.TrimSpace(catalog.Data.BillingExpr[model])
 		if expr == "" {
 			continue
 		}
 		if err := validatePriceExpression(expr); err != nil {
-			unsupported++
-			continue
+			adjusted, changed := ignoreUnsupportedPriceFields(expr)
+			if !changed || validatePriceExpression(adjusted) != nil {
+				continue
+			}
+			expr = adjusted
+			ignored++
 		}
 		prices[model] = modelPrice{Expression: expr, Source: "basellm"}
 	}
@@ -121,13 +138,13 @@ func (a *app) syncPrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message := fmt.Sprintf("已同步 %d 个模型价格", len(prices))
-	if unsupported > 0 {
-		message += fmt.Sprintf("；%d 个含当前无法计量的字段，已跳过", unsupported)
+	if ignored > 0 {
+		message += fmt.Sprintf("；%d 个含当前无法计量的字段，已忽略该字段", ignored)
 	}
 	if wantsAdminJSON(r) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"message": message, "synced": len(prices), "skipped": unsupported})
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": message, "synced": len(prices), "ignored": ignored, "skipped": 0})
 		return
 	}
 	http.Redirect(w, r, "/prices", http.StatusSeeOther)

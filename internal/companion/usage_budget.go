@@ -306,12 +306,19 @@ func (r *usageReservation) settle(actual int64, meterError string) error {
 	return r.store.adjustReservedUsage(r.planID, actual-r.amount, meterError)
 }
 
-// estimateRequestCharge follows new-api's pre-consume/settle pattern. The
-// request body gives a conservative prompt size, while explicit output-token
-// limits give a useful reservation for streams. The fallback is an estimate;
-// final upstream usage remains authoritative and can exceed it.
+// estimateRequestCharge follows new-api's pre-consume/settle pattern. Prompt
+// text is counted with the same tokenkit model-family estimator, while
+// explicit output-token limits give a useful reservation for streams. The
+// fallback is an estimate; final upstream usage remains authoritative and can
+// exceed it.
 func estimateRequestCharge(route string, body []byte, price modelPrice) (int64, error) {
-	input := int64((len(body) + estimatedRequestBytesPerToken - 1) / estimatedRequestBytesPerToken)
+	var request struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		return 0, err
+	}
+	input := estimateRequestTokens(route, body, request.Model)
 	if input < 1 {
 		input = 1
 	}

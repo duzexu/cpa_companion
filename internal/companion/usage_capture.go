@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/QuantumNous/new-api/tokenkit"
 )
 
 const maxUsageCapture = 8 << 20
@@ -15,6 +17,7 @@ const maxUsageCapture = 8 << 20
 type usageCapture struct {
 	target     http.ResponseWriter
 	route      string
+	model      string
 	status     int
 	stream     bool
 	tooLarge   bool
@@ -26,6 +29,11 @@ type usageCapture struct {
 	hasUsage   bool
 	finalUsage bool
 	written    int64
+	// Count generated text in SSE deltas for interrupted streams. Framing,
+	// event metadata and keepalives are not model output.
+	outputBytes int64
+	hasDelta    bool
+	outputText  strings.Builder
 }
 
 func (w *usageCapture) Header() http.Header { return w.target.Header() }
@@ -97,6 +105,7 @@ func (w *usageCapture) consumeSSE(chunk []byte) {
 
 func (w *usageCapture) finishEvent() {
 	if len(w.eventData) > 0 {
+		w.captureOutputDelta(w.eventData)
 		if usage, ok := parseResponseUsage(w.route, w.eventData); ok {
 			w.mergeUsage(usage)
 			if w.route == "/v1/responses" {
@@ -109,6 +118,72 @@ func (w *usageCapture) finishEvent() {
 			}
 		}
 		w.eventData = w.eventData[:0]
+	}
+}
+
+// captureOutputDelta follows the same principle as new-api's interrupted
+// stream accounting: estimate from generated content seen before cancellation,
+// not from the much larger SSE wire representation. A route with an unknown
+// event shape still falls back to delivered bytes in estimate.
+func (w *usageCapture) captureOutputDelta(data []byte) {
+	var event struct {
+		Type    string          `json:"type"`
+		Delta   json.RawMessage `json:"delta"`
+		Choices []struct {
+			Text  string `json:"text"`
+			Delta struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				Reasoning        string `json:"reasoning"`
+				ToolCalls        []struct {
+					Function struct {
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return
+	}
+	add := func(value string) {
+		if value != "" {
+			w.outputBytes += int64(len(value))
+			w.hasDelta = true
+			if w.outputText.Len() < maxUsageCapture {
+				remaining := maxUsageCapture - w.outputText.Len()
+				if len(value) > remaining {
+					value = value[:remaining]
+				}
+				w.outputText.WriteString(value)
+			}
+		}
+	}
+	if strings.HasSuffix(event.Type, ".delta") || event.Type == "content_block_delta" {
+		var delta string
+		if json.Unmarshal(event.Delta, &delta) == nil {
+			add(delta)
+		} else {
+			var detail struct {
+				Text        string `json:"text"`
+				Thinking    string `json:"thinking"`
+				PartialJSON string `json:"partial_json"`
+			}
+			if json.Unmarshal(event.Delta, &detail) == nil {
+				add(detail.Text)
+				add(detail.Thinking)
+				add(detail.PartialJSON)
+			}
+		}
+	}
+	for _, choice := range event.Choices {
+		add(choice.Text)
+		add(choice.Delta.Content)
+		add(choice.Delta.ReasoningContent)
+		add(choice.Delta.Reasoning)
+		for _, call := range choice.Delta.ToolCalls {
+			add(call.Function.Arguments)
+		}
 	}
 }
 
@@ -149,27 +224,39 @@ func (w *usageCapture) result() (tokenUsage, error) {
 	return w.usage, nil
 }
 
-// Byte-to-token ratios for responses that never reported final usage. Both
-// err toward overcharging: request JSON averages more than three bytes per
-// token, and streamed output carries SSE and JSON framing around each delta.
+// Unknown event formats and unparseable responses use a byte fallback.
 const (
-	estimatedRequestBytesPerToken  = 3
 	estimatedResponseBytesPerToken = 4
 )
 
 // estimate bounds token usage from what was sent and delivered, keeping any
 // exact counts already reported, such as Anthropic's message_start input.
-func (w *usageCapture) estimate(requestBytes int) tokenUsage {
+func (w *usageCapture) estimate(requestBody []byte) tokenUsage {
 	if w.stream {
 		w.finishEvent()
+	}
+	if w.model == "" {
+		var request struct {
+			Model string `json:"model"`
+		}
+		_ = json.Unmarshal(requestBody, &request)
+		w.model = request.Model
 	}
 	usage := tokenUsage{}
 	if w.hasUsage && w.usage.valid() && w.usage.Input > 0 {
 		usage.Input, usage.CacheRead, usage.CacheWrite = w.usage.Input, w.usage.CacheRead, w.usage.CacheWrite
 	} else {
-		usage.Input = int64(requestBytes / estimatedRequestBytesPerToken)
+		usage.Input = estimateRequestTokens(w.route, requestBody, w.model)
 	}
-	usage.Output = w.written / estimatedResponseBytesPerToken
+	outputBytes := w.written
+	if w.stream && w.hasDelta {
+		usage.Output = int64(tokenkit.Estimate(w.model, w.outputText.String()))
+		if remaining := w.outputBytes - int64(w.outputText.Len()); remaining > 0 {
+			usage.Output += (remaining + estimatedResponseBytesPerToken - 1) / estimatedResponseBytesPerToken
+		}
+	} else {
+		usage.Output = outputBytes / estimatedResponseBytesPerToken
+	}
 	if w.hasUsage && w.usage.Output > usage.Output {
 		usage.Output = w.usage.Output
 	}

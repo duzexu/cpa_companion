@@ -278,6 +278,23 @@ func openUsageLogs(dataDir string) (*usageLogStore, error) {
 }
 func (s *usageLogStore) Close() error { return s.db.Close() }
 
+func (s *usageLogStore) clearUsageLogs(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Keep audit records after clearing request logs, but remove dangling
+	// associations so the audit page cannot point at deleted rows.
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_record_details SET usage_log_id = NULL WHERE usage_log_id IS NOT NULL`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_logs`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *usageLogStore) insert(ctx context.Context, l usageLog) error {
 	if l.UserID == "" || l.Status < 100 || l.Status > 599 {
 		return errors.New("invalid usage log")

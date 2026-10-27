@@ -111,6 +111,21 @@ func (s *usageLogStore) auditStats(ctx context.Context) (auditSummary, error) {
 	return v, err
 }
 
+func (s *usageLogStore) clearAuditRecords(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM audit_record_details`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM content_audit_records`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *usageLogStore) auditRecords(ctx context.Context, userID, result string, page int) ([]auditRecord, bool, error) {
 	if page < 1 {
 		page = 1

@@ -7,7 +7,7 @@ import (
 
 // All page styles are loaded once. Navigation replaces page content without
 // removing and reinserting styles, so controls keep their appearance in place.
-const stylesheetLink = `<link rel="stylesheet" href="/assets/app.css">`
+const stylesheetLink = `<link rel="stylesheet" href="/assets/app.css"><link rel="icon" type="image/png" sizes="256x256" href="/assets/logo.png"><link rel="apple-touch-icon" href="/assets/logo.png">`
 
 //go:embed assets/app.css
 var appCSS []byte

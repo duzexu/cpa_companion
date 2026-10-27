@@ -19,23 +19,23 @@ type auditEndpointView struct {
 }
 
 type auditPageData struct {
-	User         user
-	CSRF         string
-	Config       auditConfig
-	Categories   []auditCategoryView
-	Rows         []auditRecord
-	LinkedLogs   []usageLog
-	LinkedLogIDs map[int64]bool
-	Summary      auditSummary
-	Endpoints    []auditEndpointView
-	KeywordsText string
-	UserFilter   string
-	ResultFilter string
-	Page         int
-	PreviousURL  string
-	NextURL      string
-	HasNext      bool
-	Saved        bool
+	User           user
+	CSRF           string
+	Config         auditConfig
+	Categories     []auditCategoryView
+	Rows           []auditRecord
+	LinkedLogs     []usageLog
+	LinkedLogIDs   map[int64]bool
+	Summary        auditSummary
+	Endpoints      []auditEndpointView
+	KeywordsText   string
+	UserFilter     string
+	ResultFilter   string
+	Page           int
+	PreviousURL    string
+	NextURL        string
+	HasNext        bool
+	Saved, Cleared bool
 }
 
 func (a *app) auditPage(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +109,7 @@ func (a *app) auditPage(w http.ResponseWriter, r *http.Request) {
 		Categories: categories, Rows: rows, LinkedLogs: linkedLogs, LinkedLogIDs: linkedLogIDs, Summary: summary, Endpoints: endpoints,
 		KeywordsText: strings.Join(cfg.Keywords, "\n"), UserFilter: userFilter, ResultFilter: resultFilter,
 		Page: page, PreviousURL: pageURL(page - 1), NextURL: pageURL(page + 1), HasNext: hasNext,
-		Saved: query.Get("saved") == "1"}, a.cfg.GitHubURL)
+		Saved: query.Get("saved") == "1", Cleared: query.Get("cleared") == "1"}, a.cfg.GitHubURL)
 }
 
 func (a *app) saveAuditSettings(w http.ResponseWriter, r *http.Request) {

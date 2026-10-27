@@ -37,6 +37,10 @@ type app struct {
 	accountCache      accountCache
 	observedCooldowns observedCredentialCooldowns
 	resetGate         sync.Mutex
+	quotaCacheMu      sync.Mutex
+	quotaCache        map[string]quotaCacheEntry
+	weeklyRequestMu   sync.Mutex
+	weeklyRequests    map[string][]time.Time
 }
 
 type signedPayload struct {
@@ -140,6 +144,9 @@ func newApp(cfg settings, db *store) *app {
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /assets/logo.png", serveBrandLogo)
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/assets/logo.png", http.StatusTemporaryRedirect)
+	})
 	mux.HandleFunc("GET /assets/app.css", serveAppCSS)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /login", a.loginPage)
@@ -163,7 +170,9 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /admin/plans", a.savePlan)
 	mux.HandleFunc("POST /admin/prices", a.savePrice)
 	mux.HandleFunc("POST /admin/audit", a.saveAuditSettings)
+	mux.HandleFunc("POST /admin/audit/clear", a.clearAuditRecords)
 	mux.HandleFunc("POST /admin/prices/sync", a.syncPrices)
+	mux.HandleFunc("POST /admin/logs/clear", a.clearUsageLogs)
 	mux.HandleFunc("POST /admin/plans/delete", a.deletePlan)
 	mux.HandleFunc("POST /quota/reset", a.resetQuota)
 	mux.HandleFunc("POST /admin/refresh", a.refreshSource)
@@ -595,7 +604,8 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 			defer func() { <-semaphore }()
 			ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 			defer cancel()
-			accounts[i].ResetAvailable, _ = a.availableResetCount(ctx, accounts[i])
+			snapshot := a.cachedQuotaSnapshot(ctx, accounts[i], 0)
+			accounts[i].ResetAvailable = snapshot.Reset.Count
 		}(i)
 	}
 	wg.Wait()
@@ -761,6 +771,7 @@ func (a *app) refreshSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "source CPA refresh failed", 502)
 		return
 	}
+	a.invalidateQuotaCache(target.ID)
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
@@ -886,6 +897,7 @@ func (a *app) savePlan(w http.ResponseWriter, r *http.Request) {
 	var ids []string
 	limits := map[string]int{}
 	resetAvailability := map[string]int{}
+	weeklyMin := map[string]int{}
 	windows := map[string]planWindow{}
 	seen := map[string]bool{}
 	for _, id := range r.PostForm["account_id"] {
@@ -938,6 +950,18 @@ func (a *app) savePlan(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		limits[id] = limit
+		rawWeekly := strings.TrimSpace(r.PostForm.Get("weekly_min_" + id))
+		if rawWeekly == "" {
+			rawWeekly = "0"
+		}
+		weekly, err := strconv.Atoi(rawWeekly)
+		if err != nil || weekly < 0 || weekly > 100 {
+			adminMutationError(w, r, "周额度最低可用比例必须是 0 到 100 的整数，0 表示不限制", 400)
+			return
+		}
+		if weekly > 0 {
+			weeklyMin[id] = weekly
+		}
 	}
 	budgetValue := strings.TrimSpace(r.PostForm.Get("budget_usd"))
 	budgetMicros, err := parseUSD(budgetValue)
@@ -954,7 +978,7 @@ func (a *app) savePlan(w http.ResponseWriter, r *http.Request) {
 		adminMutationError(w, r, "每分钟请求数须为 0 到 1000000 的整数，0 表示不限制", 400)
 		return
 	}
-	plan := routingPlan{ID: planID, Name: name, AccountIDs: ids, AccountWindows: windows, ResetLimits: limits, RPM: rpm, BudgetPicoUSD: budgetMicros * 1_000_000}
+	plan := routingPlan{ID: planID, Name: name, AccountIDs: ids, AccountWindows: windows, ResetLimits: limits, WeeklyMin: weeklyMin, RPM: rpm, BudgetPicoUSD: budgetMicros * 1_000_000}
 	if err := a.db.savePlan(plan, resetAvailability); err != nil {
 		if errors.Is(err, errPlanAccountConflict) {
 			adminMutationError(w, r, "所选上游账号的有效期与已有方案重叠，请调整时间段或账号", http.StatusConflict)
@@ -1061,6 +1085,66 @@ func (a *app) deletePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	a.planRPM.forget(r.PostForm.Get("id"))
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+}
+
+func (a *app) clearAuditRecords(w http.ResponseWriter, r *http.Request) {
+	u, session, ok := a.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !a.cfg.AdminSubjects[u.ID] {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	if !checkCSRF(r, session) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if a.logs == nil {
+		adminMutationError(w, r, "审计数据库不可用", http.StatusServiceUnavailable)
+		return
+	}
+	if err := a.logs.clearAuditRecords(r.Context()); err != nil {
+		adminMutationError(w, r, "清除审计记录失败", http.StatusInternalServerError)
+		return
+	}
+	if wantsAdminJSON(r) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(`{"message":"审计记录已清除"}`))
+		return
+	}
+	http.Redirect(w, r, "/audit?cleared=1", http.StatusSeeOther)
+}
+
+func (a *app) clearUsageLogs(w http.ResponseWriter, r *http.Request) {
+	u, session, ok := a.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !a.cfg.AdminSubjects[u.ID] {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	if !checkCSRF(r, session) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if a.logs == nil {
+		adminMutationError(w, r, "使用日志数据库不可用", http.StatusServiceUnavailable)
+		return
+	}
+	if err := a.logs.clearUsageLogs(r.Context()); err != nil {
+		adminMutationError(w, r, "清除使用日志失败", http.StatusInternalServerError)
+		return
+	}
+	if wantsAdminJSON(r) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(`{"message":"使用日志已清除"}`))
+		return
+	}
+	http.Redirect(w, r, "/logs?cleared=1", http.StatusSeeOther)
 }
 
 func render(w http.ResponseWriter, source string, data any, githubURL ...string) {

@@ -43,8 +43,13 @@ func TestPlanTemplatesRender(t *testing.T) {
 			if tc.name == "dashboard" && (!strings.Contains(w.Body.String(), "5 小时限额") || !strings.Contains(w.Body.String(), "主动重置过期时间") || !strings.Contains(w.Body.String(), "第 1 次")) {
 				t.Fatal("quota or reset expiry preview missing")
 			}
-			if tc.name == "admin" && !strings.Contains(w.Body.String(), "已分配给 alice") {
-				t.Fatal("assignment owner not shown")
+			if tc.name == "admin" {
+				if !strings.Contains(w.Body.String(), "已分配给 alice") {
+					t.Fatal("assignment owner not shown")
+				}
+				if !strings.Contains(w.Body.String(), "周额度最低比例") || !strings.Contains(w.Body.String(), "weekly_min_") {
+					t.Fatal("weekly quota threshold field missing")
+				}
 			}
 		})
 	}

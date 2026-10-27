@@ -346,10 +346,10 @@ func TestAbortedResponsesAfterCompletedUsageKeepsExactCounts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			usage, charge, estimated := a.settleUsage(reservation, price, meter, 5000, true)
+			usage, charge, estimated := a.settleUsage(reservation, price, meter, []byte(`{"model":"pricey"}`), true)
 			setAuditUsage(logged, usage, charge, estimated)
 		} else {
-			a.recordUnpricedUsage(logged, meter, "cheap", 5000, true)
+			a.recordUnpricedUsage(logged, meter, "cheap", []byte(`{"model":"cheap"}`), true)
 		}
 		if logged.InputTokens != 10 || logged.OutputTokens != 5 || logged.Estimated {
 			t.Fatalf("priced=%v: completed usage was replaced by estimate: %+v", priced, logged)

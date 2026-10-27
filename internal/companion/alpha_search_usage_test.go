@@ -55,7 +55,7 @@ func TestAlphaSearchChargesUsageAndHidesUnmeteredRoutes(t *testing.T) {
 		t.Fatalf("search response: %d %q", response.Code, response.Body.String())
 	}
 	price, _ := a.db.priceFor("pricey")
-	estimatedUsage := tokenUsage{Input: int64(len(requestBody) / estimatedRequestBytesPerToken), Output: int64(len(estimatedResponse) / estimatedResponseBytesPerToken)}
+	estimatedUsage := tokenUsage{Input: estimateRequestTokens("/v1/alpha/search", []byte(requestBody), "pricey"), Output: int64(len(estimatedResponse) / estimatedResponseBytesPerToken)}
 	estimatedCharge, err := price.charge(estimatedUsage)
 	if err != nil {
 		t.Fatal(err)

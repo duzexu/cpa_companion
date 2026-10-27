@@ -3,6 +3,7 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,71 @@ func TestQuotaWindowNamesAndResetTimes(t *testing.T) {
 	}
 	if !windows[0].Low() || windows[1].Low() {
 		t.Fatal("low quota color threshold is incorrect")
+	}
+}
+
+func TestWeeklyQuotaAvailabilityUsesMostRestrictiveWindow(t *testing.T) {
+	windows := []quotaWindow{
+		{Name: "5 小时限额", Remaining: 99},
+		{Name: "周限额", Remaining: 82},
+		{Name: "Sonnet 周限额", Remaining: 76},
+	}
+	remaining, found := weeklyQuotaAvailable(windows)
+	if !found || remaining != 76 {
+		t.Fatalf("unexpected weekly quota: remaining=%d found=%v", remaining, found)
+	}
+	if got, found := weeklyQuotaAvailable([]quotaWindow{{Name: "5 小时限额", Remaining: 1}}); found || got != 100 {
+		t.Fatalf("non-weekly window should not satisfy threshold: remaining=%d found=%v", got, found)
+	}
+}
+
+func TestWeeklyQuotaCacheTTLTracksDistanceToFloor(t *testing.T) {
+	near := weeklyQuotaCacheTTL([]quotaWindow{{Name: "周限额", Remaining: 81}}, nil, 80, 0)
+	far := weeklyQuotaCacheTTL([]quotaWindow{{Name: "周限额", Remaining: 99}}, nil, 80, 0)
+	busy := weeklyQuotaCacheTTL([]quotaWindow{{Name: "周限额", Remaining: 99}}, nil, 80, 120)
+	if near >= far || near < 5*time.Second || far > 2*time.Hour {
+		t.Fatalf("cache TTL did not follow quota margin: near=%v far=%v", near, far)
+	}
+	if busy >= far || busy > time.Minute {
+		t.Fatalf("cache TTL did not follow recent request volume: busy=%v far=%v", busy, far)
+	}
+	if got := weeklyQuotaCacheTTL(nil, errors.New("unavailable"), 80, 0); got != 5*time.Second {
+		t.Fatalf("failed quota should use shortest TTL, got %v", got)
+	}
+}
+
+func TestFilterWeeklyQuotaAccounts(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var call struct {
+			AuthIndex string `json:"auth_index"`
+		}
+		if r.URL.Path != "/v0/management/quota/fetch" || json.NewDecoder(r.Body).Decode(&call) != nil {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		remaining := 0.79
+		if call.AuthIndex == "high" {
+			remaining = 0.80
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"groups": []map[string]any{{
+			"displayName": "weekly",
+			"buckets":     []map[string]any{{"description": "周限额", "remainingFraction": remaining}},
+		}}})
+	}))
+	defer server.Close()
+	base, _ := url.Parse(server.URL)
+	a := &app{cfg: settings{CPABaseURL: base, CPAManagementKey: "test-key"}}
+	accounts := []credential{{ID: "low", AuthIndex: "low", Provider: "other"}, {ID: "high", AuthIndex: "high", Provider: "other"}}
+	plan := routingPlan{WeeklyMin: map[string]int{"low": 80, "high": 80}}
+	filtered := a.filterWeeklyQuotaAccounts(context.Background(), plan, accounts)
+	if len(filtered) != 1 || filtered[0].ID != "high" {
+		t.Fatalf("weekly threshold filtering failed: %+v", filtered)
+	}
+	filtered = a.filterWeeklyQuotaAccounts(context.Background(), plan, accounts)
+	if len(filtered) != 1 || filtered[0].ID != "high" || calls.Load() != 2 {
+		t.Fatalf("weekly quota cache was not reused: accounts=%+v calls=%d", filtered, calls.Load())
 	}
 }
 
@@ -100,6 +166,7 @@ func TestResetExpiryPreviewTracksNearestAvailableCredit(t *testing.T) {
 		}
 	}
 	firstSpent.Store(true)
+	a.invalidateQuotaCache(account.ID)
 	view := preview("second-user", "second-plan")
 	if view.ResetAvailable != 1 || len(view.ResetExpiries) != 1 || !view.ResetExpiries[0].ExpiresAt.Equal(secondExpiry) {
 		t.Fatalf("preview should follow the upstream pool after a reset, not retain a fixed expiry: %+v", view)

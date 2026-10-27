@@ -74,7 +74,7 @@ func TestEstimateRequestChargeUsesOutputLimitAndCacheRates(t *testing.T) {
 	if err != nil || withoutLimit <= withLimit {
 		t.Fatalf("missing output limit did not use fallback: limited=%d fallback=%d err=%v", withLimit, withoutLimit, err)
 	}
-	input := int64((len(`{"model":"x","max_tokens":10}`) + 2) / 3)
+	input := estimateRequestTokens("/v1/chat/completions", []byte(`{"model":"x","max_tokens":10}`), "x")
 	want := input*3_000_000 + 10*2_000_000
 	if withLimit != want {
 		t.Fatalf("cache-write estimate=%d, want %d", withLimit, want)
