@@ -54,6 +54,90 @@ func TestModelCooldownRefreshesStoredDeadline(t *testing.T) {
 	}
 }
 
+func TestInFlightSuccessClearsStaleModelCooldown(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v8/management/credentials":
+			_, _ = w.Write([]byte(`{"files":[{"id":"account","name":"first.json","source":"file","provider":"codex"}]}`))
+		case "/v8/management/credentials/models":
+			_, _ = w.Write([]byte(`{"models":[{"id":"test-model"},{"id":"first/test-model"}]}`))
+		case "/v8/management/config/api-keys":
+			_, _ = w.Write([]byte(`{}`))
+		case "/v0/management/oauth-model-alias":
+			_, _ = w.Write([]byte(`{"oauth-model-alias":{}}`))
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"first/test-model"}]}`))
+		case "/v1/chat/completions":
+			close(started)
+			<-release
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	base, _ := url.Parse(upstream.URL)
+	dir := t.TempDir()
+	db, err := openStore(filepath.Join(dir, "store.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	logs, err := openUsageLogs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	if err := db.upsertUser(user{ID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.savePlan(routingPlan{Name: "plan", AccountIDs: []string{"account"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignPlanForTest(db, "alice", db.plans()[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	key, err := db.createKeySecured("alice", "test", testVaultKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newApp(settings{PublicURL: base, CPABaseURL: base, CPAAPIKey: "proxy", CPAManagementKey: "management"}, db)
+	a.logs = logs
+	finished := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
+		r.Header.Set("Authorization", "Bearer "+key)
+		w := httptest.NewRecorder()
+		a.routes().ServeHTTP(w, r)
+		finished <- w
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	resetAt := time.Now().Add(time.Hour)
+	if err := logs.recordModelCooldown(context.Background(), "account", "test-model", resetAt); err != nil {
+		t.Fatal(err)
+	}
+	a.observedCooldowns.record("account", resetAt, time.Now())
+	close(release)
+	select {
+	case response := <-finished:
+		if response.Code != http.StatusOK {
+			t.Fatalf("in-flight request: %d %s", response.Code, response.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight request did not finish")
+	}
+	active, err := logs.activeModelCooldowns(context.Background(), "test-model", time.Now())
+	if err != nil || len(active) != 0 || len(a.observedCooldowns.active(time.Now())) != 0 {
+		t.Fatalf("stale cooldown remained after success: db=%v observed=%v err=%v", active, a.observedCooldowns.active(time.Now()), err)
+	}
+}
+
 func TestModelCooldownSkipsAccountsAndSurvivesRestart(t *testing.T) {
 	var mu sync.Mutex
 	var calls []string

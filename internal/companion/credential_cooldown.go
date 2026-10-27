@@ -53,6 +53,16 @@ func (c *observedCredentialCooldowns) active(now time.Time) map[string]time.Time
 	return active
 }
 
+func (c *observedCredentialCooldowns) clear(accountID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.accounts[accountID]; !ok {
+		return false
+	}
+	delete(c.accounts, accountID)
+	return true
+}
+
 func (c *observedCredentialCooldowns) recordBlocked(accountID string, resetAt, now time.Time) {
 	if accountID == "" || !resetAt.After(now) {
 		return

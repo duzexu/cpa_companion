@@ -624,6 +624,15 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		finalCyberResponse, finalCyberAccount = buffer, account
 		activeAccount = account
 		a.proxy.ServeHTTP(buffer, attempt)
+		// An in-flight request can succeed just after another request observes
+		// model_cooldown. That success proves the local deadline is stale.
+		if buffer.status >= 200 && buffer.status < 300 && a.observedCooldowns.clear(account.ID) && a.logs != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := a.logs.clearModelCooldown(ctx, account.ID, model); err != nil {
+				log.Printf("clear stale model cooldown for %s: %v", account.ID, err)
+			}
+			cancel()
+		}
 		if buffer.status == http.StatusTooManyRequests {
 			now := time.Now()
 			resetAt, modelCooled := modelCooldownReset(buffer, now)
