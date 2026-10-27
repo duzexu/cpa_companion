@@ -771,7 +771,32 @@ func (a *app) refreshSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "source CPA refresh failed", 502)
 		return
 	}
+	a.accountCache.invalidate()
 	a.invalidateQuotaCache(target.ID)
+	// Re-read CPA after the refresh. A successful refresh can leave a genuine
+	// quota cooldown in place; only discard local deadlines once CPA reports
+	// none for this credential.
+	fresh, err := a.cpaCredential(r.Context(), target.ID)
+	if err != nil {
+		log.Printf("read refreshed credential %s: %v", target.ID, err)
+		http.Error(w, "refreshed credential status unavailable", http.StatusBadGateway)
+		return
+	}
+	cooled := false
+	for _, cooldown := range fresh.Cooldowns {
+		if quotaCooldown(cooldown) && cooldown.RetryAt.After(time.Now()) {
+			cooled = true
+			break
+		}
+	}
+	if !cooled && a.logs != nil {
+		if err := a.logs.clearAccountModelCooldowns(r.Context(), target.ID); err != nil {
+			log.Printf("clear refreshed credential cooldowns for %s: %v", target.ID, err)
+			http.Error(w, "local cooldown refresh failed", http.StatusInternalServerError)
+			return
+		}
+	}
+	a.observedCooldowns.clearForRefresh(target.ID)
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 

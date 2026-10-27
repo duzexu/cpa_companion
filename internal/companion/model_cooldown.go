@@ -48,6 +48,14 @@ func (s *usageLogStore) clearModelCooldown(ctx context.Context, accountID, model
 	return err
 }
 
+func (s *usageLogStore) clearAccountModelCooldowns(ctx context.Context, accountID string) error {
+	if accountID == "" {
+		return errors.New("account ID required")
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM model_cooldowns WHERE account_id = ?`, accountID)
+	return err
+}
+
 // The absolute deadline is stored rather than CPA's relative duration. An
 // expired entry no longer limits requests even if cleanup has not run yet.
 func modelCooldownReset(w *retryResponseWriter, now time.Time) (time.Time, bool) {

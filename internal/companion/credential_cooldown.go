@@ -63,6 +63,13 @@ func (c *observedCredentialCooldowns) clear(accountID string) bool {
 	return true
 }
 
+func (c *observedCredentialCooldowns) clearForRefresh(accountID string) {
+	c.mu.Lock()
+	delete(c.accounts, accountID)
+	delete(c.blocked, accountID)
+	c.mu.Unlock()
+}
+
 func (c *observedCredentialCooldowns) recordBlocked(accountID string, resetAt, now time.Time) {
 	if accountID == "" || !resetAt.After(now) {
 		return
@@ -86,34 +93,41 @@ func (c *observedCredentialCooldowns) blockedUntil(accountID string, now time.Ti
 	return resetAt
 }
 
-// A model_cooldown response describes the requested model, not the underlying
-// credential's scope. Ask CPA's management API before applying a local gate.
-func (a *app) cpaCredentialCooldown(ctx context.Context, accountID string, now time.Time) (time.Time, error) {
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-	raw, err := remoteGet(ctx, managementClient(4*time.Second), a.cfg, "/v8/management/credentials", remoteFileLimit)
+func (a *app) cpaCredential(ctx context.Context, accountID string) (credential, error) {
+	raw, err := remoteGet(ctx, managementClient(8*time.Second), a.cfg, "/v8/management/credentials", remoteFileLimit)
 	if err != nil {
-		return time.Time{}, err
+		return credential{}, err
 	}
 	var result struct {
 		Files []credential `json:"files"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil || result.Files == nil {
-		return time.Time{}, errors.New("invalid CPA credential cooldown list")
+		return credential{}, errors.New("invalid CPA credential cooldown list")
 	}
 	for _, account := range result.Files {
-		if account.ID != accountID {
-			continue
+		if account.ID == accountID {
+			return account, nil
 		}
-		var resetAt time.Time
-		for _, cooldown := range account.Cooldowns {
-			if cooldown.Scope == "credential" && quotaCooldown(cooldown) && cooldown.RetryAt.After(now) && cooldown.RetryAt.After(resetAt) {
-				resetAt = cooldown.RetryAt
-			}
-		}
-		return resetAt, nil
 	}
-	return time.Time{}, errors.New("CPA credential missing from cooldown list")
+	return credential{}, errors.New("CPA credential missing from cooldown list")
+}
+
+// A model_cooldown response describes the requested model, not the underlying
+// credential's scope. Ask CPA's management API before applying a local gate.
+func (a *app) cpaCredentialCooldown(ctx context.Context, accountID string, now time.Time) (time.Time, error) {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	account, err := a.cpaCredential(ctx, accountID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var resetAt time.Time
+	for _, cooldown := range account.Cooldowns {
+		if cooldown.Scope == "credential" && quotaCooldown(cooldown) && cooldown.RetryAt.After(now) && cooldown.RetryAt.After(resetAt) {
+			resetAt = cooldown.RetryAt
+		}
+	}
+	return resetAt, nil
 }
 
 func (a *app) credentialBlockedUntil(account credential, now time.Time) time.Time {
