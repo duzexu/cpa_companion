@@ -603,12 +603,19 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 			log.Printf("record upstream cyber policy audit: %v", err)
 		}
 	}()
+	var lastRetryResponse *retryResponseWriter
+	var lastRetryAccount credential
 	for i, account := range eligible {
+		limit := plan.ConcurrencyLimit(account.ID)
+		if !a.planConcurrency.tryAcquire(account.ID, limit) {
+			continue
+		}
 		finalCyberResponse = nil
 		attempt := r.Clone(r.Context())
 		attempt.Body = io.NopCloser(bytes.NewReader(body))
 		attempt.ContentLength = int64(len(body))
 		if err := prepareForwardRequest(attempt, account.Prefix); err != nil {
+			a.planConcurrency.release(account.ID)
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -623,7 +630,10 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		buffer := &retryResponseWriter{target: target, header: make(http.Header), watchCyber: a.logs != nil}
 		finalCyberResponse, finalCyberAccount = buffer, account
 		activeAccount = account
-		a.proxy.ServeHTTP(buffer, attempt)
+		func() {
+			defer a.planConcurrency.release(account.ID)
+			a.proxy.ServeHTTP(buffer, attempt)
+		}()
 		// An in-flight request can succeed just after another request observes
 		// model_cooldown. That success proves the local deadline is stale.
 		if buffer.status >= 200 && buffer.status < 300 && a.observedCooldowns.clear(account.ID) && a.logs != nil {
@@ -679,6 +689,7 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		}
 		if retry && i < len(eligible)-1 {
 			a.affinity.rebind(namespace, session.ID, account.ID, eligible[i+1].ID)
+			lastRetryResponse, lastRetryAccount = buffer, account
 			finalCyberResponse = nil
 			continue
 		}
@@ -696,6 +707,14 @@ func (a *app) forwardPlanRequest(w http.ResponseWriter, r *http.Request, userID 
 		}
 		return
 	}
+	if lastRetryResponse != nil {
+		lastRetryResponse.commit()
+		audit.AccountID, audit.AccountPrefix = lastRetryAccount.ID, lastRetryAccount.Prefix
+		finalCyberResponse, finalCyberAccount = lastRetryResponse, lastRetryAccount
+		return
+	}
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "all assigned upstream credentials are at their concurrency limits", http.StatusTooManyRequests)
 }
 
 // filterWeeklyQuotaAccounts applies the optional per-account weekly quota

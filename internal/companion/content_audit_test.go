@@ -107,15 +107,23 @@ func TestAuditDecisionsEndpointUsesFullURLAndObjectState(t *testing.T) {
 		var body struct {
 			Model string `json:"model"`
 			State struct {
-				Conversation string `json:"conversation"`
+				Task        string `json:"task"`
+				Description string `json:"description"`
 			} `json:"state"`
 			Questions map[string]struct {
-				Type string `json:"type"`
+				Type     string            `json:"type"`
+				Criteria map[string]string `json:"criteria"`
 			} `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model != "typesafe/jev-latest" ||
-			body.State.Conversation != conversation || len(body.Questions) != len(auditCategories) {
+			body.State.Task != "内容审计" || body.State.Description != conversation || len(body.Questions) != len(auditCategories) {
 			t.Errorf("invalid decisions request: %+v, %v", body, err)
+		}
+		for _, category := range auditCategories {
+			question := body.Questions[auditQuestionID(category.Name)]
+			if question.Type != "noul" || question.Criteria["true"] != category.CriteriaTrue || question.Criteria["false"] != category.CriteriaFalse {
+				t.Errorf("invalid %s decision criteria: %+v", category.Name, question)
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(auditTestResponse("hate", 0.7))
@@ -157,8 +165,9 @@ func TestAuditPersistsOnlyHitInputAndFallsBack(t *testing.T) {
 			Model     string `json:"model"`
 			State     string `json:"state"`
 			Questions map[string]struct {
-				Type         string `json:"type"`
-				Instructions string `json:"instructions"`
+				Type         string            `json:"type"`
+				Instructions string            `json:"instructions"`
+				Criteria     map[string]string `json:"criteria"`
 			} `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model != "custom-jev" || body.State == "" || len(body.Questions) != len(auditCategories) {
@@ -166,7 +175,7 @@ func TestAuditPersistsOnlyHitInputAndFallsBack(t *testing.T) {
 		}
 		for _, category := range auditCategories {
 			question := body.Questions[auditQuestionID(category.Name)]
-			if question.Type != "noul" || question.Instructions != category.Question {
+			if question.Type != "noul" || question.Instructions != auditQuestionInstruction(category.Question) || len(question.Criteria) != 0 {
 				t.Errorf("invalid %s question: %+v", category.Name, question)
 			}
 		}

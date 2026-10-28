@@ -258,12 +258,13 @@ func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thr
 		return auditDecision{}, errors.New("AI Gateway API key unavailable")
 	}
 	type question struct {
-		Type         string `json:"type"`
-		Instructions string `json:"instructions"`
+		Type         string            `json:"type"`
+		Instructions string            `json:"instructions"`
+		Criteria     map[string]string `json:"criteria,omitempty"`
 	}
 	questions := make(map[string]question, len(auditCategories))
 	for _, category := range auditCategories {
-		questions[auditQuestionID(category.Name)] = question{Type: "noul", Instructions: category.Question}
+		questions[auditQuestionID(category.Name)] = question{Type: "noul", Instructions: auditQuestionInstruction(category.Question)}
 	}
 	parsedURL, err := url.Parse(endpointURL)
 	if err != nil {
@@ -272,7 +273,15 @@ func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thr
 	decisionsAPI := strings.HasSuffix(strings.TrimRight(parsedURL.Path, "/"), "/v1/decisions")
 	var state any = input
 	if decisionsAPI {
-		state = map[string]string{"conversation": input}
+		state = map[string]string{"task": "内容审计", "description": input}
+		for _, category := range auditCategories {
+			q := questions[auditQuestionID(category.Name)]
+			q.Criteria = map[string]string{
+				"true":  category.CriteriaTrue,
+				"false": category.CriteriaFalse,
+			}
+			questions[auditQuestionID(category.Name)] = q
+		}
 	}
 	payload, err := json.Marshal(struct {
 		Model     string              `json:"model"`

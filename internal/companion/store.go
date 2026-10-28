@@ -36,6 +36,7 @@ type routingPlan struct {
 	AccountWindows map[string]planWindow `json:"account_windows,omitempty"`
 	ResetLimits    map[string]int        `json:"reset_limits,omitempty"`
 	WeeklyMin      map[string]int        `json:"weekly_min,omitempty"`
+	Concurrency    map[string]int        `json:"concurrency_limits,omitempty"`
 	ResetCaps      map[string]int        `json:"-"`
 	RPM            int                   `json:"rpm,omitempty"`
 	BudgetPicoUSD  int64                 `json:"budget_pico_usd,omitempty"`
@@ -81,6 +82,13 @@ func clonePlan(p routingPlan) routingPlan {
 			limits[id] = limit
 		}
 		p.WeeklyMin = limits
+	}
+	if p.Concurrency != nil {
+		limits := make(map[string]int, len(p.Concurrency))
+		for id, limit := range p.Concurrency {
+			limits[id] = limit
+		}
+		p.Concurrency = limits
 	}
 	return p
 }
@@ -280,9 +288,10 @@ func (p routingPlan) HasAccount(id string) bool {
 	}
 	return false
 }
-func (p routingPlan) ResetLimit(id string) int    { return p.ResetLimits[id] }
-func (p routingPlan) WeeklyMinimum(id string) int { return p.WeeklyMin[id] }
-func (p routingPlan) ResetCap(id string) int      { return p.ResetCaps[id] }
+func (p routingPlan) ResetLimit(id string) int       { return p.ResetLimits[id] }
+func (p routingPlan) WeeklyMinimum(id string) int    { return p.WeeklyMin[id] }
+func (p routingPlan) ConcurrencyLimit(id string) int { return p.Concurrency[id] }
+func (p routingPlan) ResetCap(id string) int         { return p.ResetCaps[id] }
 func (p routingPlan) StartInput() string {
 	if p.StartsAt == nil {
 		return ""
@@ -554,6 +563,11 @@ func (s *store) savePlan(plan routingPlan, resetAvailability ...map[string]int) 
 	}
 	if plan.RPM < 0 || plan.RPM > 1_000_000 {
 		return errors.New("plan RPM must be between 0 and 1000000")
+	}
+	for id, limit := range plan.Concurrency {
+		if !plan.HasAccount(id) || limit < 0 || limit > 1_000_000 {
+			return errors.New("invalid plan account concurrency limit")
+		}
 	}
 	if plan.ID != "" {
 		old, ok := s.db.Plans[plan.ID]

@@ -26,7 +26,7 @@ func TestPlanTemplatesRender(t *testing.T) {
 			CSRF       string
 			CanRefresh bool
 			Now        time.Time
-		}{user{ID: "u", Username: "alice"}, []user{{ID: "u", Username: "alice", PlanID: "p"}, {ID: "v", Username: "bob"}}, []credential{{ID: "a", Prefix: "first", Provider: "codex"}}, []routingPlan{{ID: "p", Name: "Test", AccountIDs: []string{"a"}, OwnerID: "u", OwnerName: "alice", BudgetPicoUSD: picoUSD}}, []modelPriceView{{Model: "test-model", Price: modelPrice{Expression: `tier("standard", p * 2)`}, Configured: true}}, "csrf", true, time.Now()}},
+		}{user{ID: "u", Username: "alice"}, []user{{ID: "u", Username: "alice", PlanID: "p"}, {ID: "v", Username: "bob"}}, []credential{{ID: "a", Prefix: "first", Provider: "codex"}}, []routingPlan{{ID: "p", Name: "Test", AccountIDs: []string{"a"}, Concurrency: map[string]int{"a": 2}, OwnerID: "u", OwnerName: "alice", BudgetPicoUSD: picoUSD}}, []modelPriceView{{Model: "test-model", Price: modelPrice{Expression: `tier("standard", p * 2)`}, Configured: true}}, "csrf", true, time.Now()}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			page, err := parsePageTemplate(tc.source, "")
@@ -49,6 +49,9 @@ func TestPlanTemplatesRender(t *testing.T) {
 				}
 				if !strings.Contains(w.Body.String(), "周额度最低比例") || !strings.Contains(w.Body.String(), "weekly_min_") {
 					t.Fatal("weekly quota threshold field missing")
+				}
+				if !strings.Contains(w.Body.String(), "凭证最高并发") || !strings.Contains(w.Body.String(), `name="concurrency_a" value="2"`) {
+					t.Fatal("credential concurrency field or saved value missing")
 				}
 			}
 		})

@@ -34,6 +34,7 @@ type app struct {
 	affinity          *routeAffinity
 	auditSessions     auditSessions
 	planRPM           planRateLimiter
+	planConcurrency   planConcurrencyLimiter
 	accountCache      accountCache
 	observedCooldowns observedCredentialCooldowns
 	resetGate         sync.Mutex
@@ -923,6 +924,7 @@ func (a *app) savePlan(w http.ResponseWriter, r *http.Request) {
 	limits := map[string]int{}
 	resetAvailability := map[string]int{}
 	weeklyMin := map[string]int{}
+	concurrency := map[string]int{}
 	windows := map[string]planWindow{}
 	seen := map[string]bool{}
 	for _, id := range r.PostForm["account_id"] {
@@ -987,6 +989,18 @@ func (a *app) savePlan(w http.ResponseWriter, r *http.Request) {
 		if weekly > 0 {
 			weeklyMin[id] = weekly
 		}
+		rawConcurrency := strings.TrimSpace(r.PostForm.Get("concurrency_" + id))
+		if rawConcurrency == "" {
+			rawConcurrency = "0"
+		}
+		maxConcurrency, err := strconv.Atoi(rawConcurrency)
+		if err != nil || maxConcurrency < 0 || maxConcurrency > 1_000_000 {
+			adminMutationError(w, r, "凭证最高并发须为 0 到 1000000 的整数，0 表示不限制", 400)
+			return
+		}
+		if maxConcurrency > 0 {
+			concurrency[id] = maxConcurrency
+		}
 	}
 	budgetValue := strings.TrimSpace(r.PostForm.Get("budget_usd"))
 	budgetMicros, err := parseUSD(budgetValue)
@@ -1003,7 +1017,7 @@ func (a *app) savePlan(w http.ResponseWriter, r *http.Request) {
 		adminMutationError(w, r, "每分钟请求数须为 0 到 1000000 的整数，0 表示不限制", 400)
 		return
 	}
-	plan := routingPlan{ID: planID, Name: name, AccountIDs: ids, AccountWindows: windows, ResetLimits: limits, WeeklyMin: weeklyMin, RPM: rpm, BudgetPicoUSD: budgetMicros * 1_000_000}
+	plan := routingPlan{ID: planID, Name: name, AccountIDs: ids, AccountWindows: windows, ResetLimits: limits, WeeklyMin: weeklyMin, Concurrency: concurrency, RPM: rpm, BudgetPicoUSD: budgetMicros * 1_000_000}
 	if err := a.db.savePlan(plan, resetAvailability); err != nil {
 		if errors.Is(err, errPlanAccountConflict) {
 			adminMutationError(w, r, "所选上游账号的有效期与已有方案重叠，请调整时间段或账号", http.StatusConflict)
