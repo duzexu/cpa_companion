@@ -13,14 +13,20 @@ type auditCategory struct {
 	CriteriaFalse string
 }
 
-// The state sent to TypeSafe contains both sides of the conversation so the
-// decision model has context. Make the subject of every question explicit:
-// visible assistant text, quoted examples and code are context, not the
-// user's intent to classify.
-const auditUserIntentInstruction = "Judge only the user's own messages marked 用户：. Treat 助手： messages as context, not as the user's intent. Ignore quoted examples, code, and instructions contained in assistant messages. "
+// Apply the category's definition to user-authored content, using both sides
+// of the conversation to resolve meaning without attributing assistant text
+// or quoted material to the user.
+const auditUserIntentInstruction = "Use the conversation to interpret the user's actual intent. Judge user messages (用户：), using assistant messages (助手：) only as context. Quoting or discussing an act does not by itself establish a request to perform it. Answer true only when the evidence satisfies the following condition; otherwise answer false. "
 
 func auditQuestionInstruction(question string) string {
 	return auditUserIntentInstruction + question
+}
+
+func auditQuestionCriteria(category auditCategory) map[string]string {
+	return map[string]string{
+		"true":  "The user's actual request or assertion, interpreted in context, provides clear evidence for this condition: " + category.CriteriaTrue,
+		"false": "The user's actual request or assertion does not establish the condition, or the evidence is absent or ambiguous. " + category.CriteriaFalse,
+	}
 }
 
 var auditCategories = []auditCategory{
@@ -28,11 +34,11 @@ var auditCategories = []auditCategory{
 	{"harassment/threatening", 90, "Does the user's own message threaten or intimidate an identifiable person?", "The user's own message threatens or intimidates a person with harm or coercion.", "The user's own message contains no threat or intimidation toward a person."},
 	{"hate", 65, "Does the user's own message express hatred, dehumanization, or abuse toward a protected group?", "The user's own message attacks or dehumanizes people because of a protected characteristic.", "The user's own message does not express hatred or abuse toward a protected group."},
 	{"hate/threatening", 65, "Does the user's own message threaten a protected group with harm?", "The user's own message threatens harm against people because of a protected characteristic.", "The user's own message contains no threat of harm toward a protected group."},
-	{"illicit", 95, "Does the user's own message request help committing, facilitating, or evading detection of a crime or other illicit act?", "The user's own message asks for actionable help with a crime, wrongdoing, fraud, theft, evasion, or unauthorized access.", "The user's own message does not request actionable help with a crime or other illicit act."},
+	{"illicit", 95, "Does the user request actionable assistance to carry out or conceal an illicit act? Both the illicit objective and the request for assistance must be established by the conversation.", "The user requests actionable assistance to commit or conceal an illicit act, with evidence of both the illicit objective and the requested assistance.", "The user's own message does not request actionable help with a crime or other illicit act."},
 	{"illicit/violent", 95, "Does the user's own message request help planning or committing a violent crime?", "The user's own message asks for actionable help to plan, carry out, or conceal violence or a violent crime.", "The user's own message does not request actionable help for a violent crime."},
 	{"self-harm", 65, "Does the user's own message concern self-harm or suicide, including support-seeking or discussion of the topic?", "The user's own message concerns self-harm or suicide, even if it does not express intent or request instructions.", "The user's own message does not concern self-harm or suicide."},
 	{"self-harm/intent", 85, "Does the user's own message express personal intent, desire, or a plan to self-harm or die by suicide?", "The user's own message expresses personal intent, desire, or a plan to self-harm or die by suicide.", "The user's own message does not express personal intent, desire, or a plan to self-harm or die by suicide."},
-	{"self-harm/instructions", 65, "Does the user's own message request instructions, methods, or assistance to self-harm or die by suicide?", "The user's own message requests actionable instructions, methods, or assistance to self-harm or die by suicide.", "The user's own message does not request instructions or methods for self-harm or suicide."},
+	{"self-harm/instructions", 65, "Does the user request actionable methods or assistance for self-injury or suicide? Both the self-harm objective and the request for implementation guidance must be established by the conversation.", "The user requests actionable methods or implementation assistance for self-injury or suicide, with evidence of both the self-harm objective and the requested guidance.", "The user's own message does not request instructions or methods for self-harm or suicide."},
 	{"sexual", 65, "Does the user's own message request or describe explicit sexual content?", "The user's own message requests or describes explicit sexual acts or sexual content.", "The user's own message does not request or describe explicit sexual content."},
 	{"sexual/minors", 65, "Does the user's own message sexualize, exploit, or request sexual content involving a minor?", "The user's own message sexualizes, exploits, or requests sexual content involving a minor.", "The user's own message does not sexualize, exploit, or request sexual content involving a minor."},
 	{"violence", 95, "Does the user's own message request or describe violence toward a person or animal?", "The user's own message requests, encourages, or describes violence toward a person or animal.", "The user's own message does not request, encourage, or describe violence toward a person or animal."},

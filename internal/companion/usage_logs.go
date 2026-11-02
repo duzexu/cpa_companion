@@ -20,19 +20,18 @@ import (
 
 type usageLogStore struct{ db *sql.DB }
 
-const usageLogSelectColumns = `id,at_ms,user_id,username,key_id,plan_id,account_id,account_prefix,model,route,status,duration_ms,first_byte_ms,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,charge_pico_usd,estimated,error_code,error_message`
+const usageLogSelectColumns = `id,at_ms,user_id,username,key_id,key_name,plan_id,account_id,account_prefix,model,route,status,duration_ms,first_byte_ms,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,charge_pico_usd,estimated,error_code,error_message`
 
 type usageLog struct {
-	ID                                                                          int64
-	At                                                                          time.Time
-	UserID, KeyID, PlanID, AccountID, AccountPrefix, Model, Route               string
-	Username                                                                    string // Snapshot of the username when the request starts.
-	ErrorCode, ErrorMessage                                                     string
-	Status, DurationMS                                                          int
-	FirstByteMS                                                                 *int
-	InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens, ChargePicoUSD int64
-	Estimated                                                                   bool
-	AuditIDs                                                                    []int64
+	ID                                                                               int64
+	At                                                                               time.Time
+	UserID, Username, KeyID, KeyName, PlanID, AccountID, AccountPrefix, Model, Route string
+	ErrorCode, ErrorMessage                                                          string
+	Status, DurationMS                                                               int
+	FirstByteMS                                                                      *int
+	InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens, ChargePicoUSD      int64
+	Estimated                                                                        bool
+	AuditIDs                                                                         []int64
 }
 
 func (l usageLog) CostUSD() string   { return formatPicoUSD(l.ChargePicoUSD) }
@@ -211,6 +210,7 @@ func openUsageLogs(dataDir string) (*usageLogStore, error) {
     user_id TEXT NOT NULL,
     username TEXT NOT NULL DEFAULT '',
     key_id TEXT NOT NULL DEFAULT '',
+    key_name TEXT NOT NULL DEFAULT '',
     plan_id TEXT NOT NULL DEFAULT '',
     account_id TEXT NOT NULL DEFAULT '',
     account_prefix TEXT NOT NULL DEFAULT '',
@@ -270,11 +270,39 @@ func openUsageLogs(dataDir string) (*usageLogStore, error) {
 			return nil, fmt.Errorf("initialize usage database: %w", err)
 		}
 	}
+	if err := ensureUsageLogKeyNameColumn(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate usage database: %w", err)
+	}
 	if err := os.Chmod(filepath.Join(dataDir, "usage.sqlite"), 0600); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("secure usage database: %w", err)
 	}
 	return &usageLogStore{db: db}, nil
+}
+
+func ensureUsageLogKeyNameColumn(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(usage_logs)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == "key_name" {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE usage_logs ADD COLUMN key_name TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 func (s *usageLogStore) Close() error { return s.db.Close() }
 
@@ -308,9 +336,9 @@ func (s *usageLogStore) insert(ctx context.Context, l usageLog) error {
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `INSERT INTO usage_logs
-	 (at_ms,user_id,username,key_id,plan_id,account_id,account_prefix,model,route,status,duration_ms,first_byte_ms,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,charge_pico_usd,estimated,error_code,error_message)
-	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		l.At.UnixMilli(), l.UserID, l.Username, l.KeyID, l.PlanID, l.AccountID, l.AccountPrefix, l.Model, l.Route, l.Status, l.DurationMS, l.FirstByteMS,
+		 (at_ms,user_id,username,key_id,key_name,plan_id,account_id,account_prefix,model,route,status,duration_ms,first_byte_ms,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,charge_pico_usd,estimated,error_code,error_message)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		l.At.UnixMilli(), l.UserID, l.Username, l.KeyID, l.KeyName, l.PlanID, l.AccountID, l.AccountPrefix, l.Model, l.Route, l.Status, l.DurationMS, l.FirstByteMS,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens, l.ChargePicoUSD, l.Estimated, l.ErrorCode, l.ErrorMessage)
 	if err != nil {
 		return err
@@ -429,7 +457,7 @@ func scanUsageLog(rows *sql.Rows) (usageLog, error) {
 	var at int64
 	var estimated int
 	var firstByte sql.NullInt64
-	if err := rows.Scan(&l.ID, &at, &l.UserID, &l.Username, &l.KeyID, &l.PlanID, &l.AccountID, &l.AccountPrefix, &l.Model, &l.Route, &l.Status, &l.DurationMS, &firstByte, &l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheWriteTokens, &l.ChargePicoUSD, &estimated, &l.ErrorCode, &l.ErrorMessage); err != nil {
+	if err := rows.Scan(&l.ID, &at, &l.UserID, &l.Username, &l.KeyID, &l.KeyName, &l.PlanID, &l.AccountID, &l.AccountPrefix, &l.Model, &l.Route, &l.Status, &l.DurationMS, &firstByte, &l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheWriteTokens, &l.ChargePicoUSD, &estimated, &l.ErrorCode, &l.ErrorMessage); err != nil {
 		return usageLog{}, err
 	}
 	if firstByte.Valid {

@@ -1,6 +1,7 @@
 .env
 data/
 test/local/data/
+test/audit/
 dist/
 .deploy/companion
 __pycache__/

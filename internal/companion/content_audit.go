@@ -276,10 +276,7 @@ func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thr
 		state = map[string]string{"task": "内容审计", "description": input}
 		for _, category := range auditCategories {
 			q := questions[auditQuestionID(category.Name)]
-			q.Criteria = map[string]string{
-				"true":  category.CriteriaTrue,
-				"false": category.CriteriaFalse,
-			}
+			q.Criteria = auditQuestionCriteria(category)
 			questions[auditQuestionID(category.Name)] = q
 		}
 	}

@@ -44,6 +44,26 @@ type app struct {
 	weeklyRequests    map[string][]time.Time
 }
 
+// statusClientClosedRequest follows the conventional nginx 499 semantics:
+// the client closed the request before CPA returned a response. Go's
+// net/http package does not define this status because it is not sent by the
+// server to a still-connected client; it is useful for request logs and
+// diagnostics.
+const statusClientClosedRequest = 499
+
+func writeProxyError(w http.ResponseWriter, r *http.Request, err error) {
+	if err == nil {
+		err = errors.New("unknown proxy error")
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(r.Context().Err(), context.Canceled) {
+		log.Printf("CPA proxy client canceled: %v", err)
+		http.Error(w, "client closed request: "+err.Error(), statusClientClosedRequest)
+		return
+	}
+	log.Printf("CPA proxy error: %v", err)
+	http.Error(w, "upstream proxy unavailable", http.StatusBadGateway)
+}
+
 type signedPayload struct {
 	UserID   string `json:"user_id,omitempty"`
 	CSRF     string `json:"csrf,omitempty"`
@@ -135,8 +155,7 @@ func newApp(cfg settings, db *store) *app {
 		},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("CPA proxy error: %v", err)
-			http.Error(w, "upstream proxy unavailable", http.StatusBadGateway)
+			writeProxyError(w, r, err)
 		},
 	}
 	return a
@@ -822,7 +841,7 @@ func (a *app) proxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	started := time.Now()
-	audit := usageLog{At: started.UTC(), UserID: u.ID, Username: u.Username, KeyID: key.ID, PlanID: u.PlanID, Route: r.URL.Path}
+	audit := usageLog{At: started.UTC(), UserID: u.ID, Username: u.Username, KeyID: key.ID, KeyName: key.Name, PlanID: u.PlanID, Route: r.URL.Path}
 	tracked := &logResponseWriter{ResponseWriter: w, started: started}
 	w = tracked
 	defer func() {

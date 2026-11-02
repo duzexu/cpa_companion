@@ -416,6 +416,11 @@ func (a *app) usageLogsPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request logs unavailable", 500)
 		return
 	}
+	for i := range rows {
+		if rows[i].KeyName == "" {
+			rows[i].KeyName = a.db.keyName(rows[i].UserID, rows[i].KeyID)
+		}
+	}
 	summary, err := a.logs.summary(r.Context(), f)
 	if err != nil {
 		http.Error(w, "usage summary unavailable", 500)

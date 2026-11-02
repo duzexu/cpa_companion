@@ -748,6 +748,17 @@ func (s *store) keysForUser(id string) []apiKey {
 	return out
 }
 
+func (s *store) keyName(userID, keyID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, key := range s.db.Keys {
+		if key.UserID == userID && key.ID == keyID {
+			return key.Name
+		}
+	}
+	return ""
+}
+
 func (s *store) sealedKeyForUser(userID, keyID string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

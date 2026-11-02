@@ -121,7 +121,7 @@ func TestAuditDecisionsEndpointUsesFullURLAndObjectState(t *testing.T) {
 		}
 		for _, category := range auditCategories {
 			question := body.Questions[auditQuestionID(category.Name)]
-			if question.Type != "noul" || question.Criteria["true"] != category.CriteriaTrue || question.Criteria["false"] != category.CriteriaFalse {
+			if question.Type != "noul" || question.Criteria["true"] != auditQuestionCriteria(category)["true"] || question.Criteria["false"] != auditQuestionCriteria(category)["false"] {
 				t.Errorf("invalid %s decision criteria: %+v", category.Name, question)
 			}
 		}

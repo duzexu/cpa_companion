@@ -2,6 +2,7 @@ package companion
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -36,6 +37,34 @@ func TestOAuthTrustLevelGate(t *testing.T) {
 		if (err == nil) != tc.allowed {
 			t.Errorf("profile %s: allowed=%t, error=%v", tc.profile, tc.allowed, err)
 		}
+	}
+}
+
+func TestProxyErrorRecordsClientCancellationAs499(t *testing.T) {
+	baseURL := &url.URL{Scheme: "http", Host: "localhost"}
+	a := newApp(settings{PublicURL: baseURL, CPABaseURL: baseURL}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	result := httptest.NewRecorder()
+	a.proxy.ErrorHandler(result, req, context.Canceled)
+	if result.Code != statusClientClosedRequest {
+		t.Fatalf("client cancellation status = %d, want %d", result.Code, statusClientClosedRequest)
+	}
+	if !strings.Contains(result.Body.String(), "context canceled") {
+		t.Fatalf("client cancellation body lost underlying error: %q", result.Body.String())
+	}
+}
+
+func TestProxyErrorKeeps502ForUpstreamFailure(t *testing.T) {
+	baseURL := &url.URL{Scheme: "http", Host: "localhost"}
+	a := newApp(settings{PublicURL: baseURL, CPABaseURL: baseURL}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	result := httptest.NewRecorder()
+	a.proxy.ErrorHandler(result, req, errors.New("dial tcp: connection refused"))
+	if result.Code != http.StatusBadGateway {
+		t.Fatalf("upstream failure status = %d, want %d", result.Code, http.StatusBadGateway)
+	}
+	if strings.Contains(result.Body.String(), "connection refused") {
+		t.Fatalf("upstream internal error leaked to client: %q", result.Body.String())
 	}
 }
 

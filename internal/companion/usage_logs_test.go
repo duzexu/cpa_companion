@@ -130,7 +130,7 @@ func TestUsageLogsPersistAndRespectUserScope(t *testing.T) {
 	if err != nil || more || len(alice) != 2 {
 		t.Fatalf("alice logs %d, %v", len(alice), err)
 	}
-	if alice[1].Model != "pricey" || alice[1].Username != "AliceDisplay" || alice[1].AccountPrefix != "one" || alice[1].InputTokens != 100 || alice[1].OutputTokens != 20 || alice[1].ChargePicoUSD != 120_000_000_000 {
+	if alice[1].Model != "pricey" || alice[1].Username != "AliceDisplay" || alice[1].KeyName != "test" || alice[1].AccountPrefix != "one" || alice[1].InputTokens != 100 || alice[1].OutputTokens != 20 || alice[1].ChargePicoUSD != 120_000_000_000 {
 		t.Fatalf("priced request log: %+v", alice[1])
 	}
 	if alice[1].FirstByteMS == nil || *alice[1].FirstByteMS > alice[1].DurationMS {
@@ -197,6 +197,10 @@ func TestUsageLogsPersistAndRespectUserScope(t *testing.T) {
 				!strings.Contains(body, `<td data-col="user"><span class="log-username">BobDisplay</span></td>`) ||
 				!strings.Contains(body, `<dt>用户名 / ID</dt><dd>AliceDisplay · alice</dd>`) {
 				t.Fatal("admin log page did not resolve usernames")
+			}
+			if !strings.Contains(body, `<span class="log-key-name">test</span>`) ||
+				strings.Contains(body, `<span class="log-key-name">AliceDisplay-test</span>`) {
+				t.Fatal("API Key column did not show the key name without the username")
 			}
 			if strings.Contains(bob.Body.String(), "AliceDisplay") {
 				t.Fatal("bob saw alice's username")
