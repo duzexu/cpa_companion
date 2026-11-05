@@ -254,7 +254,8 @@ func openUsageLogs(dataDir string) (*usageLogStore, error) {
     audit_id INTEGER PRIMARY KEY,
     usage_log_id INTEGER,
     endpoint_name TEXT NOT NULL DEFAULT '',
-    attempts INTEGER NOT NULL DEFAULT 0
+    attempts INTEGER NOT NULL DEFAULT 0,
+    endpoint_errors TEXT NOT NULL DEFAULT ''
   )`,
 		`CREATE INDEX IF NOT EXISTS audit_record_details_usage ON audit_record_details(usage_log_id)`,
 		`CREATE TABLE IF NOT EXISTS model_cooldowns (
@@ -273,6 +274,10 @@ func openUsageLogs(dataDir string) (*usageLogStore, error) {
 	if err := ensureUsageLogKeyNameColumn(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate usage database: %w", err)
+	}
+	if err := ensureAuditEndpointErrorsColumn(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate audit database: %w", err)
 	}
 	if err := os.Chmod(filepath.Join(dataDir, "usage.sqlite"), 0600); err != nil {
 		db.Close()
@@ -302,6 +307,30 @@ func ensureUsageLogKeyNameColumn(db *sql.DB) error {
 		return err
 	}
 	_, err = db.Exec(`ALTER TABLE usage_logs ADD COLUMN key_name TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+func ensureAuditEndpointErrorsColumn(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(audit_record_details)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == "endpoint_errors" {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE audit_record_details ADD COLUMN endpoint_errors TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 func (s *usageLogStore) Close() error { return s.db.Close() }

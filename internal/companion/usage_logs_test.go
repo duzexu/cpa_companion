@@ -2,9 +2,11 @@ package companion
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -340,5 +342,53 @@ func TestClearUsageAndAuditRecords(t *testing.T) {
 	}
 	if auditCount != 0 {
 		t.Fatalf("clear audit records left %d rows", auditCount)
+	}
+}
+
+func TestOpenUsageLogsMigratesAuditEndpointErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "usage.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE audit_record_details (
+    audit_id INTEGER PRIMARY KEY,
+    usage_log_id INTEGER,
+    endpoint_name TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0
+  )`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logs, err := openUsageLogs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	rows, err := logs.db.Query(`PRAGMA table_info(audit_record_details)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		found = found || name == "endpoint_errors"
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("endpoint_errors column was not added")
 	}
 }

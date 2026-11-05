@@ -22,6 +22,7 @@ type auditRecord struct {
 	DurationMS              int
 	UsageLogID              int64
 	EndpointName            string
+	EndpointErrors          string
 	AttemptCount            int
 }
 
@@ -96,7 +97,7 @@ func (s *usageLogStore) insertAudit(ctx context.Context, r auditRecord) (int64, 
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_record_details (audit_id,endpoint_name,attempts) VALUES (?,?,?)`, id, r.EndpointName, r.AttemptCount); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_record_details (audit_id,endpoint_name,attempts,endpoint_errors) VALUES (?,?,?,?)`, id, r.EndpointName, r.AttemptCount, r.EndpointErrors); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -146,7 +147,7 @@ func (s *usageLogStore) auditRecords(ctx context.Context, userID, result string,
 	}
 	args = append(args, 51, (page-1)*50)
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.at_ms,a.user_id,a.username,a.key_id,a.plan_id,a.model,a.route,a.first_in_session,a.hit,a.fallback,
- a.category,a.score_percent,a.threshold_percent,a.input_text,a.duration_ms,COALESCE(d.usage_log_id,0),COALESCE(d.endpoint_name,''),COALESCE(d.attempts,0)
+ a.category,a.score_percent,a.threshold_percent,a.input_text,a.duration_ms,COALESCE(d.usage_log_id,0),COALESCE(d.endpoint_name,''),COALESCE(d.attempts,0),COALESCE(d.endpoint_errors,'')
  FROM content_audit_records a LEFT JOIN audit_record_details d ON d.audit_id = a.id WHERE `+strings.Join(where, " AND ")+` ORDER BY a.at_ms DESC,a.id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, false, err
@@ -158,7 +159,7 @@ func (s *usageLogStore) auditRecords(ctx context.Context, userID, result string,
 		var at int64
 		if err := rows.Scan(&record.ID, &at, &record.UserID, &record.Username, &record.KeyID, &record.PlanID, &record.Model, &record.Route,
 			&record.FirstInSession, &record.Hit, &record.Fallback, &record.Category, &record.ScorePercent,
-			&record.ThresholdPercent, &record.InputText, &record.DurationMS, &record.UsageLogID, &record.EndpointName, &record.AttemptCount); err != nil {
+			&record.ThresholdPercent, &record.InputText, &record.DurationMS, &record.UsageLogID, &record.EndpointName, &record.AttemptCount, &record.EndpointErrors); err != nil {
 			return nil, false, err
 		}
 		record.At = time.UnixMilli(at)

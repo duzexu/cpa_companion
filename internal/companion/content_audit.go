@@ -20,6 +20,12 @@ import (
 var auditThinkingBlock = regexp.MustCompile(`(?is)<(?:think|analysis)(?:\s[^>]*)?>.*?</(?:think|analysis)\s*>`)
 var auditOpenThinkingBlock = regexp.MustCompile(`(?is)<(?:think|analysis)(?:\s[^>]*)?>.*$`)
 
+const (
+	maxConcurrentAudits            = 4
+	maxAuditEndpointErrorBodyBytes = 1024
+	maxAuditRecordErrorRunes       = 4096
+)
+
 type auditSessions struct {
 	mu   sync.Mutex
 	seen map[string]time.Time
@@ -244,6 +250,63 @@ func keywordAudit(text string, keywords []string) auditDecision {
 	return auditDecision{Category: "keyword", Fallback: true}
 }
 
+func auditErrorBody(r io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(r, maxAuditEndpointErrorBodyBytes+1))
+	if err != nil {
+		return "response body unavailable"
+	}
+	truncated := len(data) > maxAuditEndpointErrorBodyBytes
+	if truncated {
+		data = data[:maxAuditEndpointErrorBodyBytes]
+	}
+	text := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(string(data)))
+	if text == "" {
+		text = "empty response body"
+	}
+	if truncated {
+		text += " …(truncated)"
+	}
+	return text
+}
+
+func appendAuditEndpointError(current, endpoint string, err error) string {
+	entry := endpoint + ": " + err.Error()
+	if current != "" {
+		entry = current + "\n" + entry
+	}
+	runes := []rune(entry)
+	if len(runes) <= maxAuditRecordErrorRunes {
+		return entry
+	}
+	return string(runes[:maxAuditRecordErrorRunes]) + "…(truncated)"
+}
+
+func (a *app) beginAuditDecision() bool {
+	if a.auditGate == nil {
+		return true
+	}
+	select {
+	case a.auditGate <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *app) endAuditDecision() {
+	if a.auditGate != nil {
+		<-a.auditGate
+	}
+}
+
 func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thresholds map[string]int, input string) (auditDecision, error) {
 	endpointURL := endpoint.BaseURL
 	if endpointURL == "" {
@@ -264,7 +327,7 @@ func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thr
 	}
 	questions := make(map[string]question, len(auditCategories))
 	for _, category := range auditCategories {
-		questions[auditQuestionID(category.Name)] = question{Type: "noul", Instructions: auditQuestionInstruction(category.Question)}
+		questions[auditQuestionID(category.Name)] = question{Type: "noul", Instructions: auditQuestionInstruction(category.Question), Criteria: auditQuestionCriteria(category)}
 	}
 	parsedURL, err := url.Parse(endpointURL)
 	if err != nil {
@@ -274,11 +337,6 @@ func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thr
 	var state any = input
 	if decisionsAPI {
 		state = map[string]string{"task": "内容审计", "description": input}
-		for _, category := range auditCategories {
-			q := questions[auditQuestionID(category.Name)]
-			q.Criteria = auditQuestionCriteria(category)
-			questions[auditQuestionID(category.Name)] = q
-		}
 	}
 	payload, err := json.Marshal(struct {
 		Model     string              `json:"model"`
@@ -301,7 +359,7 @@ func (a *app) systemOneDecision(ctx context.Context, endpoint auditEndpoint, thr
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return auditDecision{}, fmt.Errorf("SystemOne returned HTTP %d", response.StatusCode)
+		return auditDecision{}, fmt.Errorf("SystemOne returned HTTP %d: %s", response.StatusCode, auditErrorBody(response.Body))
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
 	if err != nil || len(data) > 1<<20 {
@@ -330,27 +388,34 @@ func (a *app) inspectContent(ctx context.Context, header http.Header, body []byt
 	started := time.Now()
 	var decision auditDecision
 	var selected string
+	var endpointErrors string
 	attempts := 0
-	for _, endpoint := range cfg.Endpoints {
-		if ctx.Err() != nil {
-			break
+	if a.beginAuditDecision() {
+		defer a.endAuditDecision()
+		for _, endpoint := range cfg.Endpoints {
+			if ctx.Err() != nil {
+				break
+			}
+			attempts++
+			decisionCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutMS)*time.Millisecond)
+			result, err := a.systemOneDecision(decisionCtx, endpoint, cfg.Thresholds, input)
+			cancel()
+			if err == nil {
+				decision, selected = result, endpoint.Name
+				break
+			}
+			endpointErrors = appendAuditEndpointError(endpointErrors, endpoint.Name, err)
+			log.Printf("SystemOne audit endpoint %q failed: %v", endpoint.Name, err)
 		}
-		attempts++
-		decisionCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutMS)*time.Millisecond)
-		result, err := a.systemOneDecision(decisionCtx, endpoint, cfg.Thresholds, input)
-		cancel()
-		if err == nil {
-			decision, selected = result, endpoint.Name
-			break
-		}
-		log.Printf("SystemOne audit endpoint %q failed: %v", endpoint.Name, err)
+	} else {
+		endpointErrors = "audit concurrency limit reached; no decision endpoint was called"
 	}
 	if selected == "" {
 		decision = keywordAudit(input, cfg.Keywords)
 	}
 	record := auditRecord{At: started.UTC(), UserID: usage.UserID, Username: usage.Username, KeyID: usage.KeyID, PlanID: usage.PlanID,
 		Model: usage.Model, Route: usage.Route, FirstInSession: first, Hit: decision.Hit,
-		Fallback: decision.Fallback, Category: decision.Category, ScorePercent: decision.Score, EndpointName: selected, AttemptCount: attempts,
+		Fallback: decision.Fallback, Category: decision.Category, ScorePercent: decision.Score, EndpointName: selected, AttemptCount: attempts, EndpointErrors: endpointErrors,
 		ThresholdPercent: decision.Threshold, DurationMS: int(time.Since(started).Milliseconds())}
 	if decision.Hit {
 		record.InputText = input

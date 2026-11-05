@@ -34,7 +34,7 @@ docker compose -f docker-compose.yml -f compose.server.yml up -d --build
 
 ## 持久化、升级与回退
 
-`./data` 挂载到容器 `/data`。其中 `users.sqlite` 保存用户资料、方案分配、重置计数和会话版本；`store.json` 保存方案、价格、密钥加密副本、按顺序配置的审计接口及计费检查点；`usage.journal`（轮换后为 `usage.<编号>.journal`）保存检查点后的累计费用；`usage.sqlite` 保存请求使用日志（含请求当时的用户名快照）、内容审计记录及其使用日志关联；`cookie.key` 同时用于会话和各审计接口密钥加密。启用审计后，命中的对话上下文会保存在 `usage.sqlite`，备份也包含这些敏感内容。整个目录必须一起备份；只备份 `store.json` 会遗漏用户资料、使用日志及尚未合并的费用。丢失 `cookie.key` 后现有会话、可复制密钥及已保存的审计接口 API Key 无法恢复。备份和迁移时停止附属容器后复制整个目录，或使用一致性快照，不要把 `.env` 或 `data/` 提交到源码仓库。
+`./data` 挂载到容器 `/data`。其中 `users.sqlite` 保存用户资料、方案分配、重置计数和会话版本；`store.json` 保存方案、价格、密钥加密副本、按顺序配置的审计接口及计费检查点；`usage.journal`（轮换后为 `usage.<编号>.journal`）保存检查点后的累计费用；`usage.sqlite` 保存请求使用日志（含请求当时的用户名快照）、内容审计记录、受限长度的审计接口错误摘要及其使用日志关联；`cookie.key` 同时用于会话和各审计接口密钥加密。启用审计后，命中的对话上下文会保存在 `usage.sqlite`，备份也包含这些敏感内容。整个目录必须一起备份；只备份 `store.json` 会遗漏用户资料、使用日志及尚未合并的费用。丢失 `cookie.key` 后现有会话、可复制密钥及已保存的审计接口 API Key 无法恢复。备份和迁移时停止附属容器后复制整个目录，或使用一致性快照，不要把 `.env` 或 `data/` 提交到源码仓库。
 
 当前格式要求 `data/users.sqlite` 保存用户资料，`store.json` 使用模型价格表达式、逐账号时间窗和 `audit.endpoints`；每把 API Key 必须有加密副本。方案整体起止时间由账号时段在内存中推导，不再写入 `store.json`。升级时先停止附属容器并完整备份 `data/`，再执行 `docker compose up -d --build`；原 CPA 不需要重启。使用日志和内容审计分别保存请求发生时的用户名快照与用户 ID，后续改名不改写历史记录。方案配置使用单机 JSON，用户与使用日志分别使用单机 SQLite；服务只能运行一个实例。回退程序时应同时恢复升级前整个 `data/` 备份。
 

@@ -33,6 +33,7 @@ type app struct {
 	proxy             *httputil.ReverseProxy
 	affinity          *routeAffinity
 	auditSessions     auditSessions
+	auditGate         chan struct{}
 	planRPM           planRateLimiter
 	planConcurrency   planConcurrencyLimiter
 	accountCache      accountCache
@@ -130,7 +131,7 @@ func (c credential) PriorityText() string {
 }
 
 func newApp(cfg settings, db *store) *app {
-	a := &app{cfg: cfg, db: db, affinity: newRouteAffinity(time.Hour), accountCache: accountCache{ttl: cfg.AccountCacheTTL}}
+	a := &app{cfg: cfg, db: db, affinity: newRouteAffinity(time.Hour), auditGate: make(chan struct{}, maxConcurrentAudits), accountCache: accountCache{ttl: cfg.AccountCacheTTL}}
 	a.oauth = oauth2.Config{ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret,
 		RedirectURL: cfg.PublicURL.String() + "/auth/callback", Scopes: []string{"openid", "profile", "email"},
 		Endpoint: oauth2.Endpoint{AuthURL: cfg.OAuthAuthorize, TokenURL: cfg.OAuthToken}}

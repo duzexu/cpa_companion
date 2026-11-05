@@ -8,7 +8,8 @@ window.__companionRegister = (name, mount) => window.__companionPendingModules.p
 </script>`
 
 // Sidebar navigation keeps the shared shell mounted while replacing the
-// server-rendered page. Ordinary links and form submissions remain native.
+// server-rendered page. Explicitly marked GET filters and links reuse the same
+// path; unmarked links and all mutation forms remain native.
 const navigationScript = `<script>
 /* companion-navigation */
 (() => {
@@ -109,12 +110,24 @@ const navigationScript = `<script>
   }
 
   document.addEventListener('click', event => {
-    const link = event.target.closest('.sidebar .nav a[href]');
+    const link = event.target.closest('.sidebar .nav a[href], a[data-partial-nav][href]');
     if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey ||
         event.shiftKey || event.altKey || link.target || link.download) return;
     const url = new URL(link.href);
     if (url.origin !== location.origin || !routes.has(url.pathname)) return;
     event.preventDefault();
+    navigate(url.href, url.href !== location.href);
+  });
+  document.addEventListener('submit', event => {
+    const form = event.target.closest('form[data-partial-nav]');
+    if (!form || event.defaultPrevented) return;
+    const method = (event.submitter?.formMethod || form.method || 'get').toLowerCase();
+    if (method !== 'get') return;
+    const url = new URL(event.submitter?.formAction || form.action || location.href, location.href);
+    if (url.origin !== location.origin || !routes.has(url.pathname)) return;
+    event.preventDefault();
+    url.search = new URLSearchParams(new FormData(form)).toString();
+    url.hash = '';
     navigate(url.href, url.href !== location.href);
   });
   window.addEventListener('popstate', () => navigate(location.href, false));

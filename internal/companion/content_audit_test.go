@@ -3,6 +3,7 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -175,7 +176,8 @@ func TestAuditPersistsOnlyHitInputAndFallsBack(t *testing.T) {
 		}
 		for _, category := range auditCategories {
 			question := body.Questions[auditQuestionID(category.Name)]
-			if question.Type != "noul" || question.Instructions != auditQuestionInstruction(category.Question) || len(question.Criteria) != 0 {
+			if question.Type != "noul" || question.Instructions != auditQuestionInstruction(category.Question) ||
+				question.Criteria["true"] != auditQuestionCriteria(category)["true"] || question.Criteria["false"] != auditQuestionCriteria(category)["false"] {
 				t.Errorf("invalid %s question: %+v", category.Name, question)
 			}
 		}
@@ -352,8 +354,15 @@ func TestAuditEndpointFailoverAndUsageLogLink(t *testing.T) {
 	if rows[1].EndpointName != "备用接口" || rows[1].AttemptCount != 2 || !rows[1].Hit || rows[1].Fallback || rows[1].InputText != "用户：\nprevious user\n\n助手：\nprevious reply\n\n用户：\ncurrent user" {
 		t.Fatalf("backup result: %+v", rows[1])
 	}
+	if !strings.Contains(rows[1].EndpointErrors, "主接口: SystemOne returned HTTP 429: limited") {
+		t.Fatalf("primary endpoint error was not persisted: %+v", rows[1])
+	}
 	if !rows[0].Fallback || rows[0].EndpointName != "" || rows[0].AttemptCount != 2 || !rows[0].Hit || !strings.Contains(rows[0].InputText, "ordinary follow-up") {
 		t.Fatalf("keyword fallback: %+v", rows[0])
+	}
+	if !strings.Contains(rows[0].EndpointErrors, "主接口: SystemOne returned HTTP 429: limited") ||
+		!strings.Contains(rows[0].EndpointErrors, "备用接口: SystemOne returned HTTP 503: unavailable") {
+		t.Fatalf("fallback endpoint errors were not persisted: %+v", rows[0])
 	}
 	if rows[0].UsageLogID == 0 || rows[0].UsageLogID != rows[1].UsageLogID || !strings.Contains(rows[0].LogURL(), "log_id=") {
 		t.Fatalf("audit links: %+v %+v", rows[0], rows[1])
@@ -378,7 +387,8 @@ func TestAuditEndpointFailoverAndUsageLogLink(t *testing.T) {
 		strings.Contains(auditPageResponse.Body.String(), `class="log-dialog" id="`+logDialogID+`"`) &&
 		strings.Contains(auditPageResponse.Body.String(), "Alice · user") &&
 		!strings.Contains(auditPageResponse.Body.String(), "log_id="+strconv.FormatInt(rows[0].UsageLogID, 10))
-	endpointShown := strings.Contains(auditPageResponse.Body.String(), "SystemOne · 备用接口")
+	endpointShown := strings.Contains(auditPageResponse.Body.String(), "SystemOne · 备用接口") &&
+		strings.Contains(auditPageResponse.Body.String(), `data-audit-open="audit-errors-`)
 	if auditPageResponse.Code != http.StatusOK || !linked || !endpointShown {
 		t.Fatalf("audit page status=%d linked=%t endpoint=%t", auditPageResponse.Code, linked, endpointShown)
 	}
@@ -396,6 +406,33 @@ func TestAuditEndpointFailoverAndUsageLogLink(t *testing.T) {
 		if got := strings.Contains(w.Body.String(), "共 1 条"); got != subject.visible {
 			t.Fatalf("linked log visibility for %s = %t", subject.id, got)
 		}
+	}
+}
+
+func TestAuditConcurrencyGateAndErrorLimit(t *testing.T) {
+	a := &app{auditGate: make(chan struct{}, 1)}
+	if !a.beginAuditDecision() {
+		t.Fatal("first audit did not acquire the concurrency gate")
+	}
+	if a.beginAuditDecision() {
+		t.Fatal("audit concurrency gate exceeded its capacity")
+	}
+	a.endAuditDecision()
+	if !a.beginAuditDecision() {
+		t.Fatal("released audit concurrency slot was not reusable")
+	}
+	a.endAuditDecision()
+
+	body := auditErrorBody(strings.NewReader(strings.Repeat("x", maxAuditEndpointErrorBodyBytes+200)))
+	if !strings.HasSuffix(body, "…(truncated)") || len(body) > maxAuditEndpointErrorBodyBytes+32 {
+		t.Fatalf("audit error response was not bounded: %d %q", len(body), body[len(body)-32:])
+	}
+	errors := ""
+	for i := 0; i < 10; i++ {
+		errors = appendAuditEndpointError(errors, "endpoint", fmt.Errorf("%s", strings.Repeat("y", 1000)))
+	}
+	if len([]rune(errors)) > maxAuditRecordErrorRunes+20 || !strings.HasSuffix(errors, "…(truncated)") {
+		t.Fatalf("persisted audit errors were not bounded: %d", len([]rune(errors)))
 	}
 }
 
